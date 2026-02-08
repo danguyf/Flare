@@ -55,6 +55,10 @@ private class MediaTimelinePresenter(
 ) : TimelinePresenter(),
     KoinComponent {
     private val accountRepository: AccountRepository by inject()
+
+    // Disable per-user filters for user-specific media timeline
+    override val applyPerUserFilters: Boolean = false
+
     override val loader: Flow<BaseTimelineLoader>
         get() =
             accountServiceFlow(accountType, accountRepository).map { service ->

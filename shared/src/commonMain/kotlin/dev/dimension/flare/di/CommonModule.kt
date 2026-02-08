@@ -7,6 +7,7 @@ import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.ApplicationRepository
 import dev.dimension.flare.data.repository.LocalFilterRepository
 import dev.dimension.flare.data.repository.SearchHistoryRepository
+import dev.dimension.flare.data.repository.UserPreferenceRepository
 import dev.dimension.flare.ui.presenter.compose.ComposeUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,4 +26,5 @@ internal val commonModule =
         singleOf(::ComposeUseCase)
         singleOf(::SearchHistoryRepository)
         singleOf(::Readability)
+        single { UserPreferenceRepository(get()) }
     }

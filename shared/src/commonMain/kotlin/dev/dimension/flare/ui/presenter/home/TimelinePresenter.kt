@@ -25,6 +25,7 @@ import dev.dimension.flare.data.datasource.microblog.pagingConfig
 import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.LocalFilterRepository
 import dev.dimension.flare.model.AccountType
+import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiTimeline
 import dev.dimension.flare.ui.model.mapper.render
 import dev.dimension.flare.ui.presenter.PresenterBase
@@ -52,6 +53,11 @@ public abstract class TimelinePresenter :
     private val accountRepository: AccountRepository by inject()
 
     private val localFilterRepository: LocalFilterRepository by inject()
+
+    private val userPreferenceRepository: dev.dimension.flare.data.repository.UserPreferenceRepository by inject()
+
+    // Whether to apply per-user hide reposts/replies filters. Disabled for user-specific timelines.
+    protected open val applyPerUserFilters: Boolean = true
 
     // Try to inject a named Flow<Boolean> binding 'hideRepostsFlow' provided by platform modules.
     // If inject fails (no binding), fall back to a constant false flow.
@@ -101,29 +107,79 @@ public abstract class TimelinePresenter :
 
                     BaseTimelineLoader.NotSupported -> PagingData.emptyFlow(isError = true)
                 }.flatMapLatest { pager ->
-                    filterFlow
-                        .combine(hideRepostsFlow) { filterList, hideReposts ->
-                            filterList to hideReposts
-                        }.combine(hideRepliesFlow) { (filterList, hideReposts), hideReplies ->
-                            Triple(filterList, hideReposts, hideReplies)
-                        }.map { (filterList, hideReposts, hideReplies) ->
-                            pager.filter {
-                                val passesFilter = !it.contains(filterList)
-                                val passesRepostFilter =
-                                    if (hideReposts) {
-                                        !isRepost(it)
-                                    } else {
-                                        true
-                                    }
-                                val passesReplyFilter =
-                                    if (hideReplies) {
-                                        !isReply(it)
-                                    } else {
-                                        true
-                                    }
-                                passesFilter && passesRepostFilter && passesReplyFilter
+                    // Get active account for per-user preferences
+                    accountRepository.activeAccount.flatMapLatest { activeAccountState ->
+                        val activeAccountKey =
+                            when (activeAccountState) {
+                                is dev.dimension.flare.ui.model.UiState.Success -> activeAccountState.data.accountKey
+                                else -> null
                             }
-                        }
+
+                        filterFlow
+                            .combine(hideRepostsFlow) { filterList, hideReposts ->
+                                filterList to hideReposts
+                            }.combine(hideRepliesFlow) { (filterList, hideReposts), hideReplies ->
+                                Triple(filterList, hideReposts, hideReplies)
+                            }.flatMapLatest { (filterList, hideReposts, hideReplies) ->
+                                // Get all user preferences for this account (only if applying per-user filters)
+                                val userPrefsFlow =
+                                    if (applyPerUserFilters && activeAccountKey != null) {
+                                        userPreferenceRepository.getAllForAccount(activeAccountKey)
+                                    } else {
+                                        flowOf(emptyList())
+                                    }
+
+                                userPrefsFlow.map { userPrefs ->
+                                    // Create a map for quick lookup
+                                    val hideRepostsUsers = userPrefs.filter { it.hideReposts }.map { it.userKey }.toSet()
+                                    val hideRepliesUsers = userPrefs.filter { it.hideReplies }.map { it.userKey }.toSet()
+
+                                    pager.filter {
+                                        val passesFilter = !it.contains(filterList)
+
+                                        // Check global repost filter
+                                        val passesGlobalRepostFilter =
+                                            if (hideReposts) {
+                                                !isRepost(it)
+                                            } else {
+                                                true
+                                            }
+
+                                        // Check per-user repost filter (only if applyPerUserFilters is true)
+                                        val passesUserRepostFilter =
+                                            if (applyPerUserFilters && isRepost(it)) {
+                                                val authorKey = getAuthorKey(it)
+                                                authorKey == null || !hideRepostsUsers.contains(authorKey)
+                                            } else {
+                                                true
+                                            }
+
+                                        // Check global reply filter
+                                        val passesGlobalReplyFilter =
+                                            if (hideReplies) {
+                                                !isReply(it)
+                                            } else {
+                                                true
+                                            }
+
+                                        // Check per-user reply filter (only if applyPerUserFilters is true)
+                                        val passesUserReplyFilter =
+                                            if (applyPerUserFilters && isReply(it)) {
+                                                val authorKey = getAuthorKey(it)
+                                                authorKey == null || !hideRepliesUsers.contains(authorKey)
+                                            } else {
+                                                true
+                                            }
+
+                                        passesFilter &&
+                                            passesGlobalRepostFilter &&
+                                            passesUserRepostFilter &&
+                                            passesGlobalReplyFilter &&
+                                            passesUserReplyFilter
+                                    }
+                                }
+                            }
+                    }
                 }
             }
 
@@ -199,6 +255,16 @@ public abstract class TimelinePresenter :
 
     internal abstract val loader: Flow<BaseTimelineLoader>
     protected open val useDbKeyInItemKey: Boolean = false
+
+    private fun getAuthorKey(item: UiTimeline): MicroBlogKey? {
+        // For reposts, return the reposter's key (from topMessage), not the original author
+        if (isRepost(item)) {
+            return item.topMessage?.user?.key
+        }
+        // For regular posts and replies, return the post author's key
+        val content = item.content as? dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status ?: return null
+        return content.user?.key
+    }
 
     private fun isRepost(item: UiTimeline): Boolean =
         item.topMessage?.icon == dev.dimension.flare.ui.model.UiTimeline.TopMessage.Icon.Retweet
