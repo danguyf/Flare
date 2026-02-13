@@ -11,4 +11,6 @@ public data class UiRelation internal constructor(
     val muted: Boolean = false,
     val hasPendingFollowRequestFromYou: Boolean = false,
     val hasPendingFollowRequestToYou: Boolean = false,
+    val hideReposts: Boolean = false,
+    val hideReplies: Boolean = false,
 )

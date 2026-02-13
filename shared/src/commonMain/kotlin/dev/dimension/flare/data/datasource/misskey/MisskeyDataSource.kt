@@ -245,14 +245,23 @@ internal class MisskeyDataSource(
         )
     }
 
-    override fun relation(userKey: MicroBlogKey): Flow<UiState<UiRelation>> =
-        MemCacheable<UiRelation>(
+    override fun relation(userKey: MicroBlogKey): Flow<UiState<UiRelation>> {
+        val userPreferenceRepository: dev.dimension.flare.data.repository.UserPreferenceRepository? by lazy {
+            try {
+                val appDatabase: dev.dimension.flare.data.database.app.AppDatabase by inject()
+                dev.dimension.flare.data.repository.UserPreferenceRepository(appDatabase, accountKey, coroutineScope)
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+        return MemCacheable<UiRelation>(
             relationKeyWithUserKey(userKey),
         ) {
             val user =
                 service
                     .usersShow(UsersShowRequest(userId = userKey.id))
-            UiRelation(
+            val baseRelation = UiRelation(
                 following = user.isFollowing ?: false,
                 isFans = user.isFollowed ?: false,
                 blocking = user.isBlocking ?: false,
@@ -260,7 +269,17 @@ internal class MisskeyDataSource(
                 hasPendingFollowRequestFromYou = user.hasPendingFollowRequestFromYou ?: false,
                 hasPendingFollowRequestToYou = user.hasPendingFollowRequestToYou ?: false,
             )
+            val repo = userPreferenceRepository
+            if (repo != null) {
+                baseRelation.copy(
+                    hideReposts = repo.getHideReposts(userKey),
+                    hideReplies = repo.getHideReplies(userKey),
+                )
+            } else {
+                baseRelation
+            }
         }.toUi()
+    }
 
     override fun userTimeline(
         userKey: MicroBlogKey,
@@ -811,6 +830,42 @@ internal class MisskeyDataSource(
                 }
 
                 override fun relationState(relation: UiRelation): Boolean = relation.muted
+            },
+            object : ProfileAction.HideReposts {
+                override suspend fun invoke(
+                    userKey: MicroBlogKey,
+                    relation: UiRelation,
+                ) {
+                    val appDatabase: dev.dimension.flare.data.database.app.AppDatabase by inject()
+                    val repo = dev.dimension.flare.data.repository.UserPreferenceRepository(appDatabase, accountKey, coroutineScope)
+                    repo.toggleHideReposts(userKey)
+                    // Update the cached relation
+                    MemCacheable.updateWith<UiRelation>(
+                        key = relationKeyWithUserKey(userKey),
+                    ) {
+                        it.copy(hideReposts = !it.hideReposts)
+                    }
+                }
+
+                override fun relationState(relation: UiRelation): Boolean = relation.hideReposts
+            },
+            object : ProfileAction.HideReplies {
+                override suspend fun invoke(
+                    userKey: MicroBlogKey,
+                    relation: UiRelation,
+                ) {
+                    val appDatabase: dev.dimension.flare.data.database.app.AppDatabase by inject()
+                    val repo = dev.dimension.flare.data.repository.UserPreferenceRepository(appDatabase, accountKey, coroutineScope)
+                    repo.toggleHideReplies(userKey)
+                    // Update the cached relation
+                    MemCacheable.updateWith<UiRelation>(
+                        key = relationKeyWithUserKey(userKey),
+                    ) {
+                        it.copy(hideReplies = !it.hideReplies)
+                    }
+                }
+
+                override fun relationState(relation: UiRelation): Boolean = relation.hideReplies
             },
             object : ProfileAction.Block {
                 override suspend fun invoke(

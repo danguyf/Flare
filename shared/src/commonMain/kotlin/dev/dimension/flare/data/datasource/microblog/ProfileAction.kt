@@ -14,4 +14,8 @@ public sealed interface ProfileAction {
     public interface Block : ProfileAction
 
     public interface Mute : ProfileAction
+
+    public interface HideReposts : ProfileAction
+
+    public interface HideReplies : ProfileAction
 }

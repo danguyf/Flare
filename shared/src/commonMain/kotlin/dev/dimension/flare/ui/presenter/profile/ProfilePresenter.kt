@@ -2,11 +2,12 @@ package dev.dimension.flare.ui.presenter.profile
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import dev.dimension.flare.common.BaseTimelineLoader
-import dev.dimension.flare.common.collectAsState
+import dev.dimension.flare.common.collectAsState as collectCacheAsState
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.AuthenticatedMicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.DirectMessageDataSource
@@ -56,6 +57,14 @@ public class ProfilePresenter(
 ) : PresenterBase<ProfileState>(),
     KoinComponent {
     private val accountRepository: AccountRepository by inject()
+
+    private val timelineFilterRepository: dev.dimension.flare.data.repository.TimelineFilterRepository? by lazy {
+        try {
+            inject<dev.dimension.flare.data.repository.TimelineFilterRepository>().value
+        } catch (e: Throwable) {
+            null
+        }
+    }
 
     private val serviceFlow by lazy {
         accountServiceFlow(accountType, accountRepository)
@@ -195,6 +204,10 @@ public class ProfilePresenter(
         val myAccountKey by myAccountKeyFlow.collectAsUiState()
         val tabs by tabsFlow.collectAsUiState()
 
+        // Collect global hide settings
+        val globalHideReposts by remember { timelineFilterRepository?.hideRepostsFlow ?: flowOf(false) }.collectAsState(initial = false)
+        val globalHideReplies by remember { timelineFilterRepository?.hideRepliesFlow ?: flowOf(false) }.collectAsState(initial = false)
+
         val profileMenus =
             remember(
                 isMe,
@@ -204,6 +217,8 @@ public class ProfilePresenter(
                 profileActions,
                 userState,
                 myAccountKey,
+                globalHideReposts,
+                globalHideReplies,
             ) {
                 val user = userState.takeSuccess()
                 val accountKey = myAccountKey.takeSuccess()
@@ -280,42 +295,6 @@ public class ProfilePresenter(
                                         ),
                                     ).map { action ->
                                         when (action) {
-                                            is ProfileAction.Block -> {
-                                                ActionMenu.Item(
-                                                    icon =
-                                                        if (action.relationState(relation)) {
-                                                            ActionMenu.Item.Icon.UnBlock
-                                                        } else {
-                                                            ActionMenu.Item.Icon.Block
-                                                        },
-                                                    text =
-                                                        ActionMenu.Item.Text.Localized(
-                                                            if (action.relationState(relation)) {
-                                                                ActionMenu.Item.Text.Localized.Type.UnBlock
-                                                            } else {
-                                                                ActionMenu.Item.Text.Localized.Type.Block
-                                                            },
-                                                        ),
-                                                    onClicked = {
-                                                        if (userKey != null) {
-                                                            if (action.relationState(relation)) {
-                                                                scope.launch {
-                                                                    action.invoke(userKey, relation)
-                                                                }
-                                                            } else {
-                                                                launcher.launch(
-                                                                    DeeplinkRoute
-                                                                        .BlockUser(
-                                                                            accountKey = accountKey,
-                                                                            userKey = userKey,
-                                                                        ).toUri(),
-                                                                )
-                                                            }
-                                                        }
-                                                    },
-                                                )
-                                            }
-
                                             is ProfileAction.Mute -> {
                                                 ActionMenu.Item(
                                                     icon =
@@ -351,8 +330,96 @@ public class ProfilePresenter(
                                                     },
                                                 )
                                             }
+
+                                            is ProfileAction.HideReposts -> {
+                                                // Hide option if user is muted OR global setting is enabled
+                                                if (relation.muted || globalHideReposts) {
+                                                    null
+                                                } else {
+                                                    ActionMenu.Item(
+                                                        icon = ActionMenu.Item.Icon.Retweet,
+                                                        text =
+                                                            ActionMenu.Item.Text.Localized(
+                                                                if (action.relationState(relation)) {
+                                                                    ActionMenu.Item.Text.Localized.Type.UserUnhideReposts
+                                                                } else {
+                                                                    ActionMenu.Item.Text.Localized.Type.UserHideReposts
+                                                                },
+                                                            ),
+                                                        onClicked = {
+                                                            if (userKey != null) {
+                                                                scope.launch {
+                                                                    action.invoke(userKey, relation)
+                                                                }
+                                                            }
+                                                        },
+                                                    )
+                                                }
+                                            }
+
+                                            is ProfileAction.HideReplies -> {
+                                                // Hide option if user is muted OR global setting is enabled
+                                                if (relation.muted || globalHideReplies) {
+                                                    null
+                                                } else {
+                                                    ActionMenu.Item(
+                                                        icon = ActionMenu.Item.Icon.Reply,
+                                                        text =
+                                                            ActionMenu.Item.Text.Localized(
+                                                                if (action.relationState(relation)) {
+                                                                    ActionMenu.Item.Text.Localized.Type.UserUnhideReplies
+                                                                } else {
+                                                                    ActionMenu.Item.Text.Localized.Type.UserHideReplies
+                                                                },
+                                                            ),
+                                                        onClicked = {
+                                                            if (userKey != null) {
+                                                                scope.launch {
+                                                                    action.invoke(userKey, relation)
+                                                                }
+                                                            }
+                                                        },
+                                                    )
+                                                }
+                                            }
+
+                                            is ProfileAction.Block -> {
+                                                ActionMenu.Item(
+                                                    icon =
+                                                        if (action.relationState(relation)) {
+                                                            ActionMenu.Item.Icon.UnBlock
+                                                        } else {
+                                                            ActionMenu.Item.Icon.Block
+                                                        },
+                                                    text =
+                                                        ActionMenu.Item.Text.Localized(
+                                                            if (action.relationState(relation)) {
+                                                                ActionMenu.Item.Text.Localized.Type.UnBlock
+                                                            } else {
+                                                                ActionMenu.Item.Text.Localized.Type.Block
+                                                            },
+                                                        ),
+                                                    onClicked = {
+                                                        if (userKey != null) {
+                                                            if (action.relationState(relation)) {
+                                                                scope.launch {
+                                                                    action.invoke(userKey, relation)
+                                                                }
+                                                            } else {
+                                                                launcher.launch(
+                                                                    DeeplinkRoute
+                                                                        .BlockUser(
+                                                                            accountKey = accountKey,
+                                                                            userKey = userKey,
+                                                                        ).toUri(),
+                                                                )
+                                                            }
+                                                        }
+                                                    },
+                                                )
+                                            }
                                         }
-                                    }
+                                    }.filterNotNull()
                             } +
                             listOf(
                                 ActionMenu.Item(
@@ -490,7 +557,7 @@ public class ProfileWithUserNameAndHostPresenter(
             ).flatMap { service ->
                 remember(service) {
                     service.userByAcct("$userName@$host")
-                }.collectAsState().toUi()
+                }.collectCacheAsState().toUi()
             }
         return object : UserState {
             override val user: UiState<UiUserV2>

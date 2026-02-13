@@ -109,6 +109,10 @@ public sealed interface ActionMenu {
                     UnBlock,
                     BlockWithHandleParameter,
                     MuteWithHandleParameter,
+                    UserHideReposts,
+                    UserUnhideReposts,
+                    UserHideReplies,
+                    UserUnhideReplies,
                 }
             }
         }

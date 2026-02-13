@@ -113,10 +113,14 @@ import dev.dimension.flare.compose.ui.unlike
 import dev.dimension.flare.compose.ui.user_block
 import dev.dimension.flare.compose.ui.user_block_with_parameter
 import dev.dimension.flare.compose.ui.user_follow_edit_list
+import dev.dimension.flare.compose.ui.user_hide_replies
+import dev.dimension.flare.compose.ui.user_hide_reposts
 import dev.dimension.flare.compose.ui.user_mute
 import dev.dimension.flare.compose.ui.user_mute_with_parameter
 import dev.dimension.flare.compose.ui.user_send_message
 import dev.dimension.flare.compose.ui.user_unblock
+import dev.dimension.flare.compose.ui.user_unhide_replies
+import dev.dimension.flare.compose.ui.user_unhide_reposts
 import dev.dimension.flare.compose.ui.user_unmute
 import dev.dimension.flare.compose.ui.vote
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
@@ -953,6 +957,10 @@ private fun ActionMenu.Item.Text.asString(): String =
                     ActionMenu.Item.Text.Localized.Type.UnBlock -> Res.string.user_unblock
                     ActionMenu.Item.Text.Localized.Type.BlockWithHandleParameter -> Res.string.user_block_with_parameter
                     ActionMenu.Item.Text.Localized.Type.MuteWithHandleParameter -> Res.string.user_mute_with_parameter
+                    ActionMenu.Item.Text.Localized.Type.UserHideReposts -> Res.string.user_hide_reposts
+                    ActionMenu.Item.Text.Localized.Type.UserUnhideReposts -> Res.string.user_unhide_reposts
+                    ActionMenu.Item.Text.Localized.Type.UserHideReplies -> Res.string.user_hide_replies
+                    ActionMenu.Item.Text.Localized.Type.UserUnhideReplies -> Res.string.user_unhide_replies
                 }
             stringResource(resource, *parameters.toTypedArray())
         }

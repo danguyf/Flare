@@ -53,29 +53,93 @@ public class HomeTimelinePresenter(
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
+    private val userPreferenceRepositoryFlow: Flow<dev.dimension.flare.data.repository.UserPreferenceRepository?> by lazy {
+        accountServiceFlow(
+            accountType = accountType,
+            repository = accountRepository,
+        ).flatMapLatest { service ->
+            if (service is dev.dimension.flare.data.datasource.microblog.AuthenticatedMicroblogDataSource) {
+                try {
+                    val appDatabase: dev.dimension.flare.data.database.app.AppDatabase by inject()
+                    val scope: CoroutineScope by inject()
+                    flowOf(dev.dimension.flare.data.repository.UserPreferenceRepository(appDatabase, service.accountKey, scope))
+                } catch (_: Throwable) {
+                    flowOf(null)
+                }
+            } else {
+                flowOf(null)
+            }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun createPager(scope: CoroutineScope): Flow<PagingData<UiTimeline>> =
         super.createPager(scope).flatMapLatest { pager ->
-            hideRepostsFlow
-                .combine(hideRepliesFlow) { hideReposts, hideReplies ->
-                    hideReposts to hideReplies
-                }.map { (hideReposts, hideReplies) ->
-                    pager.filter { item ->
-                        val passesRepostFilter =
-                            if (hideReposts) {
-                                !isRepost(item)
-                            } else {
-                                true
-                            }
-                        val passesReplyFilter =
-                            if (hideReplies) {
-                                !isReply(item)
-                            } else {
-                                true
-                            }
-                        passesRepostFilter && passesReplyFilter
+            combine(
+                hideRepostsFlow,
+                hideRepliesFlow,
+                userPreferenceRepositoryFlow,
+            ) { globalHideReposts, globalHideReplies, userPrefRepo ->
+                Triple(globalHideReposts, globalHideReplies, userPrefRepo)
+            }.flatMapLatest { (globalHideReposts, globalHideReplies, userPrefRepo) ->
+                // If we have a user preference repository, combine with its cache
+                if (userPrefRepo != null) {
+                    userPrefRepo.cache.map { perUserPrefs ->
+                        pager.filter { item ->
+                            val userKey = getUserKey(item)
+
+                            // Check repost filter: global OR per-user
+                            val hideRepostForUser = userKey?.let { perUserPrefs[it]?.first } ?: false
+                            val shouldHideRepost = globalHideReposts || hideRepostForUser
+                            val passesRepostFilter =
+                                if (shouldHideRepost) {
+                                    !isRepost(item)
+                                } else {
+                                    true
+                                }
+
+                            // Check reply filter: global OR per-user
+                            val hideReplyForUser = userKey?.let { perUserPrefs[it]?.second } ?: false
+                            val shouldHideReply = globalHideReplies || hideReplyForUser
+                            val passesReplyFilter =
+                                if (shouldHideReply) {
+                                    !isReply(item)
+                                } else {
+                                    true
+                                }
+
+                            passesRepostFilter && passesReplyFilter
+                        }
                     }
+                } else {
+                    // Fallback to global settings only
+                    flowOf(
+                        pager.filter { item ->
+                            val passesRepostFilter =
+                                if (globalHideReposts) {
+                                    !isRepost(item)
+                                } else {
+                                    true
+                                }
+                            val passesReplyFilter =
+                                if (globalHideReplies) {
+                                    !isReply(item)
+                                } else {
+                                    true
+                                }
+                            passesRepostFilter && passesReplyFilter
+                        },
+                    )
                 }
+            }
         }
+
+    // Extract the userKey from a timeline item (the author of the post)
+    private fun getUserKey(item: UiTimeline): dev.dimension.flare.model.MicroBlogKey? {
+        val content = item.content as? UiTimeline.ItemContent.Status ?: return null
+        val user = content.user as? UiProfile ?: return null
+        return user.key
+    }
 
     private fun isRepost(item: UiTimeline): Boolean =
         item.topMessage?.icon == UiTimeline.TopMessage.Icon.Retweet

@@ -19,8 +19,9 @@ import dev.dimension.flare.data.database.app.dao.SearchHistoryDao
         dev.dimension.flare.data.database.app.model.DbKeywordFilter::class,
         dev.dimension.flare.data.database.app.model.DbSearchHistory::class,
         dev.dimension.flare.data.database.app.model.DbRssSources::class,
+        dev.dimension.flare.data.database.app.model.DbUserPreference::class,
     ],
-    version = 5,
+    version = 6,
     autoMigrations = [
         AutoMigration(
             from = 3,
@@ -29,6 +30,10 @@ import dev.dimension.flare.data.database.app.dao.SearchHistoryDao
         AutoMigration(
             from = 4,
             to = 5,
+        ),
+        AutoMigration(
+            from = 5,
+            to = 6,
         ),
     ],
     exportSchema = true,
@@ -48,6 +53,8 @@ internal abstract class AppDatabase : RoomDatabase() {
     abstract fun searchHistoryDao(): SearchHistoryDao
 
     abstract fun rssSourceDao(): RssSourceDao
+
+    abstract fun userPreferenceDao(): dev.dimension.flare.data.database.app.dao.UserPreferenceDao
 }
 
 // The Room compiler generates the `actual` implementations.
