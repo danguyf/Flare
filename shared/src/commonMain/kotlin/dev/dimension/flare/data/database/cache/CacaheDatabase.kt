@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 import androidx.room.immediateTransaction
 import androidx.room.useWriterConnection
 
-internal const val CACHE_DATABASE_VERSION = 22
+internal const val CACHE_DATABASE_VERSION = 23
 
 @Database(
     entities = [
@@ -24,9 +24,10 @@ internal const val CACHE_DATABASE_VERSION = 22
         dev.dimension.flare.data.database.cache.model.DbUserHistory::class,
         dev.dimension.flare.data.database.cache.model.DbEmojiHistory::class,
         dev.dimension.flare.data.database.cache.model.DbPagingKey::class,
+        dev.dimension.flare.data.database.cache.model.DbFeedScrollPosition::class,
     ],
     version = CACHE_DATABASE_VERSION,
-    exportSchema = false,
+    exportSchema = true,
 )
 @TypeConverters(
     dev.dimension.flare.data.database.adapter.MicroBlogKeyConverter::class,

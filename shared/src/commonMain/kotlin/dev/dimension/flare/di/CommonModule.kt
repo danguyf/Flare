@@ -6,6 +6,7 @@ import dev.dimension.flare.data.network.rss.Readability
 import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.ApplicationRepository
 import dev.dimension.flare.data.repository.LocalFilterRepository
+import dev.dimension.flare.data.repository.ScrollPositionRepository
 import dev.dimension.flare.data.repository.SearchHistoryRepository
 import dev.dimension.flare.ui.presenter.compose.ComposeUseCase
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,7 @@ internal val commonModule =
         singleOf(::provideCacheDatabase)
         singleOf(::ApplicationRepository)
         singleOf(::LocalFilterRepository)
+        singleOf(::ScrollPositionRepository)
         single { CoroutineScope(Dispatchers.IO) }
         singleOf(::ComposeUseCase)
         singleOf(::SearchHistoryRepository)

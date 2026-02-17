@@ -32,8 +32,9 @@ internal class BookmarkTimelineRemoteMediator(
                 }
 
                 is Request.Prepend -> {
-                    return Result(
-                        endOfPaginationReached = true,
+                    service.bookmarks(
+                        limit = pageSize,
+                        min_id = request.previousKey,
                     )
                 }
 
@@ -56,6 +57,7 @@ internal class BookmarkTimelineRemoteMediator(
                     },
                 ),
             nextKey = response.next,
+            previousKey = response.prev,
         )
     }
 }

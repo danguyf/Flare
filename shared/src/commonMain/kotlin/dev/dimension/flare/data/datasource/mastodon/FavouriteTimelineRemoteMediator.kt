@@ -31,8 +31,9 @@ internal class FavouriteTimelineRemoteMediator(
                 }
 
                 is Request.Prepend -> {
-                    return Result(
-                        endOfPaginationReached = true,
+                    service.favorites(
+                        limit = pageSize,
+                        min_id = request.previousKey,
                     )
                 }
 
@@ -52,6 +53,7 @@ internal class FavouriteTimelineRemoteMediator(
                     pagingKey = pagingKey,
                 ),
             nextKey = response.next,
+            previousKey = response.prev,
         )
     }
 }

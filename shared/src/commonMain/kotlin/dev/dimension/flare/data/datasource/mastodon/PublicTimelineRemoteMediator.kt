@@ -40,8 +40,10 @@ internal class PublicTimelineRemoteMediator(
                 }
 
                 is Request.Prepend -> {
-                    return Result(
-                        endOfPaginationReached = true,
+                    service.publicTimeline(
+                        limit = pageSize,
+                        min_id = request.previousKey,
+                        local = local,
                     )
                 }
 

@@ -33,8 +33,10 @@ internal class ListTimelineRemoteMediator(
                 }
 
                 is Request.Prepend -> {
-                    return Result(
-                        endOfPaginationReached = true,
+                    service.listTimeline(
+                        listId = listId,
+                        limit = pageSize,
+                        min_id = request.previousKey,
                     )
                 }
 
@@ -55,6 +57,7 @@ internal class ListTimelineRemoteMediator(
                     pagingKey = pagingKey,
                 ),
             nextKey = response.next,
+            previousKey = response.prev,
         )
     }
 }

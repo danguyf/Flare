@@ -39,6 +39,22 @@ internal data class DbPagingKey(
     val prevKey: String? = null,
 )
 
+@Entity(
+    indices = [
+        Index(
+            value = ["pagingKey"],
+            unique = true,
+        ),
+    ],
+)
+public data class DbFeedScrollPosition(
+    @PrimaryKey
+    val pagingKey: String,
+    val lastViewedStatusKey: MicroBlogKey? = null,
+    val lastViewedSortId: Long? = null,
+    val lastUpdated: Long = 0, // timestamp in milliseconds
+)
+
 internal data class DbPagingTimelineWithStatus(
     @Embedded
     val timeline: DbPagingTimeline,

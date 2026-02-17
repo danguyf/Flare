@@ -68,11 +68,57 @@ internal abstract class BaseTimelineRemoteMediator(
                 }
             }
 
-        val result =
+        val lvpStatusKey =
+            if (loadType == LoadType.REFRESH) {
+                database.pagingTimelineDao().getScrollPosition(pagingKey)?.lastViewedStatusKey
+            } else {
+                null
+            }
+
+        var result =
             timeline(
                 pageSize = state.config.pageSize,
                 request = request,
             )
+
+        if (loadType == LoadType.REFRESH && lvpStatusKey != null) {
+            var lvpFound = result.data.any { it.timeline.statusKey == lvpStatusKey }
+            var nextKey = result.nextKey
+            var endReached = result.endOfPaginationReached
+            var searchIterations = 0
+            val maxSearchIterations = 20
+            val combinedData = result.data.toMutableList()
+
+            while (!lvpFound && nextKey != null && searchIterations < maxSearchIterations) {
+                searchIterations++
+                val appendResult =
+                    timeline(
+                        pageSize = state.config.pageSize,
+                        request = Request.Append(nextKey),
+                    )
+
+                if (appendResult.data.isEmpty()) {
+                    endReached = appendResult.endOfPaginationReached
+                    nextKey = appendResult.nextKey
+                    break
+                }
+
+                combinedData.addAll(appendResult.data)
+                lvpFound = appendResult.data.any { it.timeline.statusKey == lvpStatusKey }
+                nextKey = appendResult.nextKey
+                endReached = appendResult.endOfPaginationReached
+            }
+
+            if (combinedData.size != result.data.size) {
+                result = Result(
+                    endOfPaginationReached = endReached,
+                    data = combinedData,
+                    nextKey = nextKey,
+                    previousKey = result.previousKey,
+                )
+            }
+        }
+
         database.connect {
             if (loadType == LoadType.REFRESH) {
                 result.data.groupBy { it.timeline.pagingKey }.keys.forEach { key ->
