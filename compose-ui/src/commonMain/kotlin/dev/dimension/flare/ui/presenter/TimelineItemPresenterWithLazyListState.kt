@@ -46,21 +46,14 @@ public class TimelineItemPresenterWithLazyListState(
         var lastRefreshIndex by remember { mutableStateOf(0) }
         var newPostCount by remember { mutableStateOf(0) }
         var hasRestoredScroll by remember { mutableStateOf(false) }
-        var lastItemCount by remember { mutableStateOf(0) }
-        var wasRefreshing by remember { mutableStateOf(false) }
 
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
 
-        // Restore scroll position on initial load OR after refresh completes
+        // Restore scroll position on initial load
         LaunchedEffect(state.listState) {
             state.listState.onSuccess {
-                val isCurrentlyRefreshing = isRefreshing
-                val justFinishedRefresh = wasRefreshing && !isCurrentlyRefreshing
-
-                // Restore if: (1) initial load and not yet restored, OR (2) refresh just finished
-                if ((!hasRestoredScroll && itemCount > 0) || (justFinishedRefresh && itemCount > 0)) {
-                    // Only try to restore if items have been loaded
+                if (!hasRestoredScroll && itemCount > 0) {
                     try {
                         val scrollPosition =
                             scrollPositionRepo.getScrollPosition(timelineTabItem.key)
@@ -98,10 +91,51 @@ public class TimelineItemPresenterWithLazyListState(
                         // Silently fail - scroll position restoration is not critical
                     }
                     hasRestoredScroll = true
-                    lastItemCount = itemCount
                 }
+            }
+        }
 
-                wasRefreshing = isCurrentlyRefreshing
+        // Restore scroll position after refresh completes
+        LaunchedEffect(state.listState) {
+            state.listState.onSuccess {
+                snapshotFlow { isRefreshing }
+                    .distinctUntilChanged()
+                    .collect { currentlyRefreshing ->
+                        // When refresh completes (isRefreshing changes from true to false)
+                        if (!currentlyRefreshing && itemCount > 0) {
+                            try {
+                                val scrollPosition =
+                                    scrollPositionRepo.getScrollPosition(timelineTabItem.key)
+                                if (scrollPosition != null) {
+                                    val sortId = scrollPosition.lastViewedSortId
+                                    val statusKey = scrollPosition.lastViewedStatusKey
+                                    if (sortId != null && sortId > 0 && statusKey != null) {
+                                        // Search through currently loaded items for the saved status
+                                        var foundIndex = -1
+                                        for (i in 0 until itemCount) {
+                                            val item = peek(i)
+                                            if (item != null) {
+                                                val itemStatusKey = when (val content = item.content) {
+                                                    is dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status -> content.statusKey
+                                                    else -> null
+                                                }
+                                                if (itemStatusKey == statusKey) {
+                                                    foundIndex = i
+                                                    break
+                                                }
+                                            }
+                                        }
+
+                                        if (foundIndex >= 0) {
+                                            lazyListState.scrollToItem(foundIndex, scrollOffset = 0)
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Silently fail - scroll position restoration is not critical
+                            }
+                        }
+                    }
             }
         }
 
