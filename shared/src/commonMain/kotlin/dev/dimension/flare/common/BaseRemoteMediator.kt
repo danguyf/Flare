@@ -110,12 +110,13 @@ internal abstract class BaseTimelineRemoteMediator(
             }
 
             if (combinedData.size != result.data.size) {
-                result = Result(
-                    endOfPaginationReached = endReached,
-                    data = combinedData,
-                    nextKey = nextKey,
-                    previousKey = result.previousKey,
-                )
+                result =
+                    Result(
+                        endOfPaginationReached = endReached,
+                        data = combinedData,
+                        nextKey = nextKey,
+                        previousKey = result.previousKey,
+                    )
             }
         }
 

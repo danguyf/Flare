@@ -32,9 +32,7 @@ internal class FeedScrollPositionManager(
     /**
      * Load the scroll position for a feed.
      */
-    suspend fun getScrollPosition(pagingKey: String): DbFeedScrollPosition? {
-        return database.pagingTimelineDao().getScrollPosition(pagingKey)
-    }
+    suspend fun getScrollPosition(pagingKey: String): DbFeedScrollPosition? = database.pagingTimelineDao().getScrollPosition(pagingKey)
 
     /**
      * Clear scroll position for a specific feed.
@@ -50,6 +48,3 @@ internal class FeedScrollPositionManager(
         database.pagingTimelineDao().clearScrollPositions()
     }
 }
-
-
-

@@ -18,10 +18,10 @@ internal class LvpSearchHelper(
     suspend fun statusExistsInFeed(
         pagingKey: String,
         statusKey: MicroBlogKey,
-    ): Boolean {
-        return database.pagingTimelineDao()
+    ): Boolean =
+        database
+            .pagingTimelineDao()
             .statusExistsInFeed(pagingKey, statusKey)
-    }
 
     /**
      * Get the most recent LVP for a feed, or null if none exists.
@@ -45,5 +45,3 @@ internal class LvpSearchHelper(
         val timestamp: Long,
     )
 }
-
-
