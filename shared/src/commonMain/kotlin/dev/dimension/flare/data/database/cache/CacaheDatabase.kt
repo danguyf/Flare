@@ -27,7 +27,7 @@ internal const val CACHE_DATABASE_VERSION = 23
         dev.dimension.flare.data.database.cache.model.DbFeedScrollPosition::class,
     ],
     version = CACHE_DATABASE_VERSION,
-    exportSchema = true,
+    exportSchema = false,
 )
 @TypeConverters(
     dev.dimension.flare.data.database.adapter.MicroBlogKeyConverter::class,
