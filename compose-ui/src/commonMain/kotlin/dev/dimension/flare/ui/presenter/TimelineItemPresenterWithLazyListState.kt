@@ -12,7 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import dev.dimension.flare.common.onSuccess
-import dev.dimension.flare.data.database.cache.model.DbFeedScrollPosition
+import dev.dimension.flare.data.database.scroll.model.DbFeedScrollPosition
 import dev.dimension.flare.data.model.TimelineTabItem
 import dev.dimension.flare.data.repository.ScrollPositionRepository
 import kotlinx.coroutines.flow.distinctUntilChanged

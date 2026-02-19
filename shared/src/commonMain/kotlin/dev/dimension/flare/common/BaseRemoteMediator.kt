@@ -9,6 +9,7 @@ import dev.dimension.flare.data.database.cache.connect
 import dev.dimension.flare.data.database.cache.mapper.saveToDatabase
 import dev.dimension.flare.data.database.cache.model.DbPagingKey
 import dev.dimension.flare.data.database.cache.model.DbPagingTimelineWithStatus
+import dev.dimension.flare.data.database.scroll.ScrollPositionDatabase
 import dev.dimension.flare.data.repository.DebugRepository
 import dev.dimension.flare.ui.model.UiTimeline
 
@@ -42,6 +43,7 @@ internal sealed interface BaseTimelineLoader {
 @OptIn(ExperimentalPagingApi::class)
 internal abstract class BaseTimelineRemoteMediator(
     private val database: CacheDatabase,
+    private val scrollPositionDatabase: ScrollPositionDatabase,
 ) : BaseRemoteMediator<Int, DbPagingTimelineWithStatus>(),
     BaseTimelineLoader {
     abstract val pagingKey: String
@@ -69,7 +71,7 @@ internal abstract class BaseTimelineRemoteMediator(
 
         val lvpStatusKey =
             if (loadType == LoadType.REFRESH) {
-                database.pagingTimelineDao().getScrollPosition(pagingKey)?.lastViewedStatusKey
+                scrollPositionDatabase.scrollPositionDao().getScrollPosition(pagingKey)?.lastViewedStatusKey
             } else {
                 null
             }

@@ -1,0 +1,47 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "0926c208eb2438c010defbcfd828947e",
+    "entities": [
+      {
+        "tableName": "feed_scroll_position",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`pagingKey` TEXT NOT NULL, `lastViewedStatusKey` TEXT, `lastViewedSortId` INTEGER, `lastUpdated` INTEGER NOT NULL, PRIMARY KEY(`pagingKey`))",
+        "fields": [
+          {
+            "fieldPath": "pagingKey",
+            "columnName": "pagingKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastViewedStatusKey",
+            "columnName": "lastViewedStatusKey",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastViewedSortId",
+            "columnName": "lastViewedSortId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastUpdated",
+            "columnName": "lastUpdated",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "pagingKey"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0926c208eb2438c010defbcfd828947e')"
+    ]
+  }
+}

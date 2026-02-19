@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 import androidx.room.immediateTransaction
 import androidx.room.useWriterConnection
 
-internal const val CACHE_DATABASE_VERSION = 24
+internal const val CACHE_DATABASE_VERSION = 23
 
 @Database(
     entities = [
@@ -27,7 +27,6 @@ internal const val CACHE_DATABASE_VERSION = 24
         dev.dimension.flare.data.database.cache.model.DbList::class,
         dev.dimension.flare.data.database.cache.model.DbListPaging::class,
         dev.dimension.flare.data.database.cache.model.DbListMember::class,
-        dev.dimension.flare.data.database.cache.model.DbFeedScrollPosition::class,
     ],
     version = CACHE_DATABASE_VERSION,
     exportSchema = false,

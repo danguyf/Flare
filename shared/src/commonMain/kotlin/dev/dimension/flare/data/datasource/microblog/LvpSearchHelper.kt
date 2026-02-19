@@ -1,6 +1,7 @@
 package dev.dimension.flare.data.datasource.microblog
 
 import dev.dimension.flare.data.database.cache.CacheDatabase
+import dev.dimension.flare.data.database.scroll.ScrollPositionDatabase
 import dev.dimension.flare.model.MicroBlogKey
 
 /**
@@ -10,7 +11,8 @@ import dev.dimension.flare.model.MicroBlogKey
  * If not found, it can attempt to load older pages to find it.
  */
 internal class LvpSearchHelper(
-    private val database: CacheDatabase,
+    private val cacheDatabase: CacheDatabase,
+    private val scrollPositionDatabase: ScrollPositionDatabase,
 ) {
     /**
      * Check if a specific status exists in the database for this feed.
@@ -19,7 +21,7 @@ internal class LvpSearchHelper(
         pagingKey: String,
         statusKey: MicroBlogKey,
     ): Boolean =
-        database
+        cacheDatabase
             .pagingTimelineDao()
             .statusExistsInFeed(pagingKey, statusKey)
 
@@ -27,7 +29,7 @@ internal class LvpSearchHelper(
      * Get the most recent LVP for a feed, or null if none exists.
      */
     suspend fun getLastViewedPosition(pagingKey: String): LvpData? {
-        val scrollPos = database.pagingTimelineDao().getScrollPosition(pagingKey)
+        val scrollPos = scrollPositionDatabase.scrollPositionDao().getScrollPosition(pagingKey)
         return if (scrollPos?.lastViewedStatusKey != null && scrollPos.lastViewedSortId != null) {
             LvpData(
                 statusKey = scrollPos.lastViewedStatusKey,

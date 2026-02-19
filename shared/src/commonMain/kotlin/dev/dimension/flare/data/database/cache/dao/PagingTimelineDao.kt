@@ -8,7 +8,6 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RewriteQueriesToDropUnusedColumns
 import androidx.room.Transaction
-import dev.dimension.flare.data.database.cache.model.DbFeedScrollPosition
 import dev.dimension.flare.data.database.cache.model.DbPagingKey
 import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbPagingTimelineWithStatus
@@ -138,19 +137,6 @@ internal interface PagingTimelineDao {
         pagingKey: String,
         prevKey: String,
     )
-
-    // Scroll position management for LVP (Last Viewed Post)
-    @Query("SELECT * FROM DbFeedScrollPosition WHERE pagingKey = :pagingKey LIMIT 1")
-    suspend fun getScrollPosition(pagingKey: String): DbFeedScrollPosition?
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun saveScrollPosition(scrollPosition: DbFeedScrollPosition)
-
-    @Query("DELETE FROM DbFeedScrollPosition WHERE pagingKey = :pagingKey")
-    suspend fun deleteScrollPosition(pagingKey: String)
-
-    @Query("DELETE FROM DbFeedScrollPosition")
-    suspend fun clearScrollPositions()
 
     @Query("SELECT EXISTS(SELECT 1 FROM DbPagingTimeline WHERE pagingKey = :pagingKey AND statusKey = :statusKey)")
     suspend fun statusExistsInFeed(
