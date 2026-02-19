@@ -103,6 +103,7 @@ public class TimelineItemPresenterWithLazyListState(
         var lastRefreshIndex by remember { mutableStateOf(0) }
         var newPostCount by remember { mutableStateOf(0) }
         var hasRestoredScroll by remember { mutableStateOf(false) }
+        var lvpRestoreInProgress by remember { mutableStateOf(false) }
 
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
@@ -120,6 +121,7 @@ public class TimelineItemPresenterWithLazyListState(
                                 (!currentlyRefreshing && itemCount > 0 && hasRestoredScroll)
 
                         if (shouldRestore) {
+                            lvpRestoreInProgress = true
                             try {
                                 val scrollPosition =
                                     scrollPositionRepo.getScrollPosition(timelineTabItem.key)
@@ -143,7 +145,11 @@ public class TimelineItemPresenterWithLazyListState(
                                 val errorContext = if (!hasRestoredScroll) "initial load" else "refresh"
                                 println("[$LVP_LOG_TAG] Error restoring LVP on $errorContext: ${e.message}")
                                 hasRestoredScroll = true
+                            } finally {
+                                lvpRestoreInProgress = false
                             }
+                        } else if (!currentlyRefreshing) {
+                            lvpRestoreInProgress = false
                         }
                     }
             }
@@ -293,6 +299,8 @@ public class TimelineItemPresenterWithLazyListState(
             override val showNewToots = showNewToots
             override val lazyListState = lazyListState
             override val newPostsCount = newPostCount
+            override val isRefreshing: Boolean
+                get() = state.isRefreshing || lvpRestoreInProgress
 
             override fun onNewTootsShown() {
                 showNewToots = false
