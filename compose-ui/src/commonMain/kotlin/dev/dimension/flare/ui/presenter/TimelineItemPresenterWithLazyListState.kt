@@ -44,7 +44,8 @@ public class TimelineItemPresenterWithLazyListState(
         successState: dev.dimension.flare.common.PagingState.Success<dev.dimension.flare.ui.model.UiTimeline>,
         scrollPosition: DbFeedScrollPosition?,
         context: String,
-    ) {
+    ): Int {
+        // Returns the LVP index if found (to trigger "New Posts" indicator), or -1 if not found
         val itemCount = successState.itemCount
         println("[$LVP_LOG_TAG] $context: Fetched $itemCount posts for ${timelineTabItem.key}")
         if (scrollPosition != null) {
@@ -72,6 +73,7 @@ public class TimelineItemPresenterWithLazyListState(
                 if (foundIndex >= 0) {
                     println("[$LVP_LOG_TAG] LVP found at index=$foundIndex, scrolling to it")
                     lazyListState.scrollToItem(foundIndex, scrollOffset = 0)
+                    return foundIndex
                 } else {
                     if (context == "Initial load") {
                         println(
@@ -84,11 +86,13 @@ public class TimelineItemPresenterWithLazyListState(
                     } else {
                         println("[$LVP_LOG_TAG] LVP NOT found in $itemCount loaded posts after refresh")
                     }
+                    return -1
                 }
             }
         } else {
             println("[$LVP_LOG_TAG] No saved LVP found")
         }
+        return -1
     }
 
     @Composable
@@ -120,12 +124,18 @@ public class TimelineItemPresenterWithLazyListState(
                                 val scrollPosition =
                                     scrollPositionRepo.getScrollPosition(timelineTabItem.key)
                                 val context = if (!hasRestoredScroll) "Initial load" else "Refresh completed"
-                                restoreLvpInFeed(
+                                val lvpIndex = restoreLvpInFeed(
                                     lazyListState,
                                     this,
                                     scrollPosition,
                                     context,
                                 )
+                                // If LVP was found during refresh at index > 0, trigger "New Posts" indicator
+                                if (lvpIndex > 0 && context == "Refresh completed") {
+                                    showNewToots = true
+                                    newPostCount = lvpIndex
+                                    println("[$LVP_LOG_TAG] New posts indicator triggered: $lvpIndex posts above LVP")
+                                }
                                 hasRestoredScroll = true
                             } catch (
                                 @Suppress("UNUSED_PARAMETER") e: Exception,
