@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 import androidx.room.immediateTransaction
 import androidx.room.useWriterConnection
 
-internal const val CACHE_DATABASE_VERSION = 23
+internal const val CACHE_DATABASE_VERSION = 24
 
 @Database(
     entities = [
@@ -24,6 +24,9 @@ internal const val CACHE_DATABASE_VERSION = 23
         dev.dimension.flare.data.database.cache.model.DbUserHistory::class,
         dev.dimension.flare.data.database.cache.model.DbEmojiHistory::class,
         dev.dimension.flare.data.database.cache.model.DbPagingKey::class,
+        dev.dimension.flare.data.database.cache.model.DbList::class,
+        dev.dimension.flare.data.database.cache.model.DbListPaging::class,
+        dev.dimension.flare.data.database.cache.model.DbListMember::class,
         dev.dimension.flare.data.database.cache.model.DbFeedScrollPosition::class,
     ],
     version = CACHE_DATABASE_VERSION,
@@ -37,6 +40,7 @@ internal const val CACHE_DATABASE_VERSION = 23
     dev.dimension.flare.data.database.cache.model.StatusConverter::class,
     dev.dimension.flare.data.database.cache.model.UserContentConverters::class,
     dev.dimension.flare.data.database.cache.model.MessageContentConverters::class,
+    dev.dimension.flare.data.database.cache.model.ListContentConverters::class,
 )
 @ConstructedBy(CacheDatabaseConstructor::class)
 internal abstract class CacheDatabase : RoomDatabase() {
@@ -51,6 +55,8 @@ internal abstract class CacheDatabase : RoomDatabase() {
     abstract fun pagingTimelineDao(): dev.dimension.flare.data.database.cache.dao.PagingTimelineDao
 
     abstract fun messageDao(): dev.dimension.flare.data.database.cache.dao.MessageDao
+
+    abstract fun listDao(): dev.dimension.flare.data.database.cache.dao.ListDao
 }
 
 // The Room compiler generates the `actual` implementations.

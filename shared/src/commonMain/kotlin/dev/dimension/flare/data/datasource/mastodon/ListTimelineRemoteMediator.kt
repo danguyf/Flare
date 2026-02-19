@@ -1,9 +1,12 @@
 package dev.dimension.flare.data.datasource.mastodon
 
 import androidx.paging.ExperimentalPagingApi
-import dev.dimension.flare.common.BaseTimelineRemoteMediator
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.mapper.toDbPagingTimeline
+import dev.dimension.flare.data.database.cache.model.DbPagingTimelineWithStatus
+import dev.dimension.flare.data.datasource.microblog.paging.BaseTimelineRemoteMediator
+import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
+import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
 import dev.dimension.flare.data.network.mastodon.MastodonService
 import dev.dimension.flare.model.MicroBlogKey
 
@@ -20,11 +23,11 @@ internal class ListTimelineRemoteMediator(
 
     override suspend fun timeline(
         pageSize: Int,
-        request: Request,
-    ): Result {
+        request: PagingRequest,
+    ): PagingResult<DbPagingTimelineWithStatus> {
         val response =
             when (request) {
-                Request.Refresh -> {
+                PagingRequest.Refresh -> {
                     service
                         .listTimeline(
                             listId = listId,
@@ -32,7 +35,7 @@ internal class ListTimelineRemoteMediator(
                         )
                 }
 
-                is Request.Prepend -> {
+                is PagingRequest.Prepend -> {
                     service.listTimeline(
                         listId = listId,
                         limit = pageSize,
@@ -40,7 +43,7 @@ internal class ListTimelineRemoteMediator(
                     )
                 }
 
-                is Request.Append -> {
+                is PagingRequest.Append -> {
                     service.listTimeline(
                         listId = listId,
                         limit = pageSize,
@@ -49,7 +52,7 @@ internal class ListTimelineRemoteMediator(
                 }
             }
 
-        return Result(
+        return PagingResult(
             endOfPaginationReached = response.isEmpty(),
             data =
                 response.toDbPagingTimeline(
