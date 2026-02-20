@@ -252,24 +252,6 @@ public class TimelineItemPresenterWithLazyListState(
                 }
         }
 
-        // Detect when new posts have been loaded at the top during a refresh
-        state.listState.onSuccess {
-            LaunchedEffect(Unit) {
-                snapshotFlow { isRefreshing }
-                    .distinctUntilChanged()
-                    .collect { currentlyRefreshing ->
-                        // When refresh completes, check if items were added above current position
-                        if (!currentlyRefreshing && !lazyListState.isScrollInProgress) {
-                            val currentIndex = lazyListState.firstVisibleItemIndex
-                            // If we're not at the very top and new items were added, show the indicator
-                            if (currentIndex > 0 && lastRefreshIndex < currentIndex) {
-                                showNewToots = true
-                                newPostCount = currentIndex
-                            }
-                        }
-                    }
-            }
-        }
 
         // Detect when new posts have been loaded at the top during a refresh
         state.listState.onSuccess {
