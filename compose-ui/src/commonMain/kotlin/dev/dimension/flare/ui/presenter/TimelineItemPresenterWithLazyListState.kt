@@ -21,6 +21,9 @@ import org.koin.compose.koinInject
 
 private const val LVP_LOG_TAG = "LVP_REFRESH"
 
+private typealias TimelineSuccess = dev.dimension.flare.common.PagingState.Success<dev.dimension.flare.ui.model.UiTimeline>
+private typealias StatusContent = dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status
+
 public class TimelineItemPresenterWithLazyListState(
     private val timelineTabItem: TimelineTabItem,
     private val lazyStaggeredGridState: LazyStaggeredGridState? = null,
@@ -44,53 +47,31 @@ public class TimelineItemPresenterWithLazyListState(
 
     private suspend fun restoreLvpInFeed(
         lazyListState: LazyStaggeredGridState,
-        successState: dev.dimension.flare.common.PagingState.Success<dev.dimension.flare.ui.model.UiTimeline>,
+        successState: TimelineSuccess,
         scrollPosition: DbFeedScrollPosition?,
     ): Int {
-        // Returns the LVP index if found (to trigger "New Posts" indicator), or -1 if not found
         val itemCount = successState.itemCount
         println("[$LVP_LOG_TAG] Fetched $itemCount posts for ${timelineTabItem.key}")
-        if (scrollPosition != null) {
-            val sortId = scrollPosition.lastViewedSortId
-            val statusKey = scrollPosition.lastViewedStatusKey
-            println("[$LVP_LOG_TAG] Saved LVP: statusKey=$statusKey, sortId=$sortId")
-            if (sortId != null && sortId > 0 && statusKey != null) {
-                // Search through currently loaded items for the saved status
-                var foundIndex = -1
-                for (i in 0 until itemCount) {
-                    val item = successState.peek(i)
-                    if (item != null) {
-                        val itemStatusKey =
-                            when (val content = item.content) {
-                                is dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status -> content.statusKey
-                                else -> null
-                            }
-                        if (itemStatusKey == statusKey) {
-                            foundIndex = i
-                            break
-                        }
-                    }
-                }
 
-                if (foundIndex >= 0) {
-                    println("[$LVP_LOG_TAG] LVP found at index=$foundIndex, scrolling to it")
-                    lazyListState.scrollToItem(foundIndex, scrollOffset = 0)
-                    return foundIndex
-                } else {
-                    println(
-                        "[$LVP_LOG_TAG] LVP NOT found in $itemCount loaded posts, scrolling to bottom to trigger older post loading",
-                    )
-                    // Scroll to bottom to trigger loading of older posts
-                    if (itemCount > 0) {
-                        lazyListState.scrollToItem(itemCount - 1)
-                    }
-                    return -1
-                }
-            }
+        val sortId = scrollPosition?.lastViewedSortId ?: return -1.also { println("[$LVP_LOG_TAG] No saved LVP found") }
+        val statusKey = scrollPosition.lastViewedStatusKey
+        if (sortId <= 0 || statusKey == null) return -1
+
+        println("[$LVP_LOG_TAG] Saved LVP: statusKey=$statusKey, sortId=$sortId")
+
+        val foundIndex = (0 until itemCount).firstOrNull { i ->
+            (successState.peek(i)?.content as? StatusContent)?.statusKey == statusKey
+        } ?: -1
+
+        return if (foundIndex >= 0) {
+            println("[$LVP_LOG_TAG] LVP found at index=$foundIndex, scrolling to it")
+            lazyListState.scrollToItem(foundIndex, scrollOffset = 0)
+            foundIndex
         } else {
-            println("[$LVP_LOG_TAG] No saved LVP found")
+            println("[$LVP_LOG_TAG] LVP NOT found in $itemCount loaded posts, scrolling to bottom to trigger older post loading")
+            if (itemCount > 0) lazyListState.scrollToItem(itemCount - 1)
+            -1
         }
-        return -1
     }
 
     @Composable
@@ -198,7 +179,7 @@ public class TimelineItemPresenterWithLazyListState(
                 }
             }.distinctUntilChanged()
                 .collect { index ->
-                    val successState = state.listState as? dev.dimension.flare.common.PagingState.Success
+                    val successState = state.listState as? TimelineSuccess
                     if (successState == null) {
                         return@collect
                     }
@@ -216,35 +197,19 @@ public class TimelineItemPresenterWithLazyListState(
                     try {
                         val item = successState.peek(index)
                         if (item != null) {
-                            val statusKey =
-                                when (val content = item.content) {
-                                    is dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status ->
-                                        content.statusKey
-                                    else -> null
-                                }
-                            if (statusKey != null) {
-                                // Extract sortId directly from the post's createdAt timestamp
-                                val sortId =
-                                    when (val content = item.content) {
-                                        is dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status ->
-                                            content.createdAt.value.toEpochMilliseconds()
-                                        else -> null
-                                    }
-                                if (sortId != null && sortId > 0) {
-                                    scrollPositionRepo.saveScrollPosition(
-                                        DbFeedScrollPosition(
-                                            pagingKey = timelineTabItem.key,
-                                            lastViewedStatusKey = statusKey,
-                                            lastViewedSortId = sortId,
-                                            lastUpdated =
-                                                kotlin.time.Clock.System
-                                                    .now()
-                                                    .toEpochMilliseconds(),
-                                        ),
-                                    )
-                                    lastSavedIndex = index
-                                }
-                            }
+                            val status = item.content as? StatusContent ?: return@collect
+                            val statusKey = status.statusKey
+                            val sortId = status.createdAt.value.toEpochMilliseconds()
+
+                            scrollPositionRepo.saveScrollPosition(
+                                DbFeedScrollPosition(
+                                    pagingKey = timelineTabItem.key,
+                                    lastViewedStatusKey = statusKey,
+                                    lastViewedSortId = sortId,
+                                    lastUpdated = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+                                ),
+                            )
+                            lastSavedIndex = index
                         }
                     } catch (e: Exception) {
                         // Silently fail - saving scroll position is not critical
@@ -275,15 +240,13 @@ public class TimelineItemPresenterWithLazyListState(
                     lazyListState.firstVisibleItemScrollOffset == 0
             }
         }
-        LaunchedEffect(isAtTheTop, showNewToots) {
-            if (isAtTheTop) {
-                showNewToots = false
-            }
-        }
-        LaunchedEffect(showNewToots) {
-            if (!showNewToots) {
-                newPostCount = 0
-            }
+
+        LaunchedEffect(Unit) {
+            snapshotFlow { Pair(isAtTheTop, showNewToots) }
+                .collect { (atTop, showNew) ->
+                    if (atTop) showNewToots = false
+                    if (!showNew) newPostCount = 0
+                }
         }
         return object : State, TimelineItemPresenter.State by state {
             override val showNewToots = showNewToots
