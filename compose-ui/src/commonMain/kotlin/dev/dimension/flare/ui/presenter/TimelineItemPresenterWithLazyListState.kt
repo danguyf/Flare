@@ -230,7 +230,16 @@ public class TimelineItemPresenterWithLazyListState(
         }
 
         val isAtTheTop by remember {
-            derivedStateOf { lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0 }
+            derivedStateOf {
+                val firstItem = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
+                if (firstItem != null) {
+                    // Check if more than 50% of the first item is visible
+                    // offset.y is negative when the top of the item is scrolled off-screen
+                    firstItem.offset.y > -(firstItem.size.height / 2)
+                } else {
+                    lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0
+                }
+            }
         }
 
         // Sync newPostsCount with scroll position (decrement as user scrolls up)
