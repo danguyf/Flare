@@ -45,6 +45,7 @@ public sealed class PagingState<T> {
     public sealed class Success<T : Any> : PagingState<T>() {
         public abstract val itemCount: Int
         public abstract val isRefreshing: Boolean
+        public abstract val refreshState: LoadState
         public abstract val appendState: LoadState
         public abstract val prependState: LoadState
 
@@ -64,12 +65,14 @@ public sealed class PagingState<T> {
         internal data class ImmutableSuccess<T : Any>(
             private val data: ImmutableList<T>,
             override val itemCount: Int = data.size,
-            override val isRefreshing: Boolean = false,
+            override val refreshState: LoadState = LoadState.NotLoading(endOfPaginationReached = true),
             override val appendState: LoadState = LoadState.NotLoading(endOfPaginationReached = true),
             override val prependState: LoadState = LoadState.NotLoading(endOfPaginationReached = true),
             private val onRefresh: suspend () -> Unit = {},
             private val onRetry: () -> Unit = {},
         ) : Success<T>() {
+            override val isRefreshing: Boolean = refreshState is LoadState.Loading
+
             override fun get(index: Int): T? = data.getOrNull(index)
 
             override fun peek(index: Int): T? = data.getOrNull(index)
@@ -90,13 +93,14 @@ public sealed class PagingState<T> {
         @Immutable
         internal data class PagingSuccess<T : Any>(
             private val data: LazyPagingItems<T>,
+            override val refreshState: LoadState,
             override val appendState: LoadState,
             override val prependState: LoadState,
         ) : Success<T>() {
             override val itemCount: Int
                 get() = data.itemCount
             override val isRefreshing: Boolean
-                get() = data.isRefreshing
+                get() = refreshState is LoadState.Loading
 
             override operator fun get(index: Int): T? = data[index]
 
@@ -217,6 +221,7 @@ internal fun <T : Any> LazyPagingItems<T>.toPagingState(): PagingState<T> {
     if (itemCount > 0) {
         return PagingState.Success.PagingSuccess(
             data = this,
+            refreshState = loadState.refresh,
             appendState = loadState.append,
             prependState = loadState.prepend,
         )
