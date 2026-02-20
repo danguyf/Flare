@@ -16,8 +16,7 @@ import dev.dimension.flare.data.database.scroll.model.DbFeedScrollPosition
 import dev.dimension.flare.data.model.TimelineTabItem
 import dev.dimension.flare.data.repository.ScrollPositionRepository
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 private const val LVP_LOG_TAG = "LVP_REFRESH"
@@ -31,6 +30,7 @@ public class TimelineItemPresenterWithLazyListState(
         public val showNewToots: Boolean
         public val lazyListState: LazyStaggeredGridState
         public val newPostsCount: Int
+        public val lvpRestoreFailedEvents: kotlinx.coroutines.flow.Flow<Unit>
 
         public fun onNewTootsShown()
     }
@@ -39,15 +39,17 @@ public class TimelineItemPresenterWithLazyListState(
         TimelineItemPresenter(timelineTabItem)
     }
 
+    private val _lvpRestoreFailedEvents: kotlinx.coroutines.flow.MutableSharedFlow<Unit> =
+        kotlinx.coroutines.flow.MutableSharedFlow(extraBufferCapacity = 1)
+
     private suspend fun restoreLvpInFeed(
         lazyListState: LazyStaggeredGridState,
         successState: dev.dimension.flare.common.PagingState.Success<dev.dimension.flare.ui.model.UiTimeline>,
         scrollPosition: DbFeedScrollPosition?,
-        context: String,
     ): Int {
         // Returns the LVP index if found (to trigger "New Posts" indicator), or -1 if not found
         val itemCount = successState.itemCount
-        println("[$LVP_LOG_TAG] $context: Fetched $itemCount posts for ${timelineTabItem.key}")
+        println("[$LVP_LOG_TAG] Fetched $itemCount posts for ${timelineTabItem.key}")
         if (scrollPosition != null) {
             val sortId = scrollPosition.lastViewedSortId
             val statusKey = scrollPosition.lastViewedStatusKey
@@ -75,16 +77,12 @@ public class TimelineItemPresenterWithLazyListState(
                     lazyListState.scrollToItem(foundIndex, scrollOffset = 0)
                     return foundIndex
                 } else {
-                    if (context == "Initial load") {
-                        println(
-                            "[$LVP_LOG_TAG] LVP NOT found in $itemCount loaded posts, scrolling to bottom to trigger older post loading",
-                        )
-                        // Scroll to bottom to trigger loading of older posts
-                        if (itemCount > 0) {
-                            lazyListState.scrollToItem(itemCount - 1)
-                        }
-                    } else {
-                        println("[$LVP_LOG_TAG] LVP NOT found in $itemCount loaded posts after refresh")
+                    println(
+                        "[$LVP_LOG_TAG] LVP NOT found in $itemCount loaded posts, scrolling to bottom to trigger older post loading",
+                    )
+                    // Scroll to bottom to trigger loading of older posts
+                    if (itemCount > 0) {
+                        lazyListState.scrollToItem(itemCount - 1)
                     }
                     return -1
                 }
@@ -104,54 +102,79 @@ public class TimelineItemPresenterWithLazyListState(
         var newPostCount by remember { mutableStateOf(0) }
         var hasRestoredScroll by remember { mutableStateOf(false) }
         var lvpRestoreInProgress by remember { mutableStateOf(false) }
+        var lvpNotFound by remember { mutableStateOf(false) }
+        var lastObservedItemCount by remember { mutableStateOf(0) }
 
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
 
-        // Restore scroll position on initial load and after refresh completes
         LaunchedEffect(state.listState) {
             state.listState.onSuccess {
-                snapshotFlow { isRefreshing }
-                    .distinctUntilChanged()
-                    .collect { currentlyRefreshing ->
-                        // Restore on initial load (when hasRestoredScroll is false and we have items)
-                        // or when refresh completes (when currentlyRefreshing becomes false)
-                        val shouldRestore =
-                            (!hasRestoredScroll && itemCount > 0) ||
-                                (!currentlyRefreshing && itemCount > 0 && hasRestoredScroll)
+                // Restore scroll position on initial load and after refresh completes
+                launch {
+                    snapshotFlow { isRefreshing }
+                        .distinctUntilChanged()
+                        .collect { currentlyRefreshing ->
+                            // Restore LVP on initial load (when hasRestoredScroll is false and we have items)
+                            // or when refresh completes (when currentlyRefreshing becomes false)
+                            val shouldRestore =
+                                (!hasRestoredScroll && itemCount > 0) ||
+                                    (!currentlyRefreshing && itemCount > 0 && hasRestoredScroll)
 
-                        if (shouldRestore) {
-                            lvpRestoreInProgress = true
-                            try {
-                                val scrollPosition =
-                                    scrollPositionRepo.getScrollPosition(timelineTabItem.key)
-                                val context = if (!hasRestoredScroll) "Initial load" else "Refresh completed"
-                                val lvpIndex = restoreLvpInFeed(
-                                    lazyListState,
-                                    this,
-                                    scrollPosition,
-                                    context,
-                                )
-                                // If LVP was found during refresh at index > 0, trigger "New Posts" indicator
-                                if (lvpIndex > 0 && context == "Refresh completed") {
-                                    showNewToots = true
-                                    newPostCount = lvpIndex
-                                    println("[$LVP_LOG_TAG] New posts indicator triggered: $lvpIndex posts above LVP")
+                            if (shouldRestore) {
+                                lvpRestoreInProgress = true
+                                try {
+                                    val scrollPosition =
+                                        scrollPositionRepo.getScrollPosition(timelineTabItem.key)
+                                    val lvpIndex = restoreLvpInFeed(
+                                        lazyListState,
+                                        this@onSuccess,
+                                        scrollPosition,
+                                    )
+                                    // If LVP was found at index > 0, trigger "New Posts" indicator
+                                    if (lvpIndex > 0) {
+                                        showNewToots = true
+                                        newPostCount = lvpIndex
+                                        println("[$LVP_LOG_TAG] New posts indicator triggered: $lvpIndex posts above LVP")
+                                        lvpNotFound = false
+                                    } else if (lvpIndex < 0 && scrollPosition != null && hasRestoredScroll) {
+                                        // LVP was saved but not found - mark for monitoring
+                                        lvpNotFound = true
+                                        lastObservedItemCount = itemCount
+                                        println("[$LVP_LOG_TAG] LVP not found, monitoring itemCount to detect when paging stops")
+                                    }
+                                    hasRestoredScroll = true
+                                } catch (e: Exception) {
+                                    val errorContext = if (!hasRestoredScroll) "initial load" else "refresh"
+                                    println("[$LVP_LOG_TAG] Error restoring LVP on $errorContext: ${e.message}")
+                                    hasRestoredScroll = true
+                                } finally {
+                                    lvpRestoreInProgress = false
                                 }
-                                hasRestoredScroll = true
-                            } catch (
-                                @Suppress("UNUSED_PARAMETER") e: Exception,
-                            ) {
-                                val errorContext = if (!hasRestoredScroll) "initial load" else "refresh"
-                                println("[$LVP_LOG_TAG] Error restoring LVP on $errorContext: ${e.message}")
-                                hasRestoredScroll = true
-                            } finally {
+                            } else if (!currentlyRefreshing) {
                                 lvpRestoreInProgress = false
                             }
-                        } else if (!currentlyRefreshing) {
-                            lvpRestoreInProgress = false
                         }
-                    }
+                }
+
+                // Monitor itemCount to detect when paging has stopped
+                launch {
+                    snapshotFlow { itemCount }
+                        .collect { currentItemCount ->
+                            if (lvpNotFound) {
+                                if (currentItemCount > lastObservedItemCount) {
+                                    // ItemCount increased - more pages loaded, keep waiting
+                                    lastObservedItemCount = currentItemCount
+                                    println("[$LVP_LOG_TAG] ItemCount grew to $currentItemCount, paging still active")
+                                } else if (currentItemCount == lastObservedItemCount && !isRefreshing) {
+                                    // ItemCount hasn't changed and not refreshing - paging has stopped
+                                    _lvpRestoreFailedEvents.tryEmit(Unit)
+                                    println("[$LVP_LOG_TAG] ItemCount stable at $currentItemCount and not refreshing - paging stopped, LVP not found, showing notification")
+                                    lvpNotFound = false
+                                }
+                            }
+                        }
+                }
             }
         }
 
@@ -248,36 +271,21 @@ public class TimelineItemPresenterWithLazyListState(
             }
         }
 
+        // Detect when new posts have been loaded at the top during a refresh
         state.listState.onSuccess {
             LaunchedEffect(Unit) {
-                snapshotFlow {
-                    if (itemCount > 0) {
-                        peek(0)?.itemKey
-                    } else {
-                        null
-                    }
-                }.mapNotNull { it }
+                snapshotFlow { Pair(itemCount, lazyListState.firstVisibleItemIndex) }
                     .distinctUntilChanged()
-                    .drop(1)
-                    .collect {
-                        showNewToots = true
-                        lastRefreshIndex = lazyListState.firstVisibleItemIndex
+                    .collect { (currentItemCount, visibleIndex) ->
+                        // When itemCount increases and we're not at the top, new posts were added above
+                        if (currentItemCount > lastRefreshIndex && visibleIndex > 0 && hasRestoredScroll) {
+                            showNewToots = true
+                            newPostCount = currentItemCount - lastRefreshIndex
+                            println("[$LVP_LOG_TAG] New posts detected: itemCount grew from $lastRefreshIndex to $currentItemCount while at index $visibleIndex")
+                        }
+                        lastRefreshIndex = currentItemCount
                     }
             }
-        }
-        LaunchedEffect(Unit) {
-            snapshotFlow { lazyListState.firstVisibleItemIndex }
-                .distinctUntilChanged()
-                .collect {
-                    if (it > lastRefreshIndex && showNewToots) {
-                        newPostCount =
-                            if (newPostCount > 0) {
-                                minOf(newPostCount, it - lastRefreshIndex)
-                            } else {
-                                it - lastRefreshIndex
-                            }
-                    }
-                }
         }
         val isAtTheTop by remember {
             derivedStateOf {
@@ -299,6 +307,7 @@ public class TimelineItemPresenterWithLazyListState(
             override val showNewToots = showNewToots
             override val lazyListState = lazyListState
             override val newPostsCount = newPostCount
+            override val lvpRestoreFailedEvents = _lvpRestoreFailedEvents
             override val isRefreshing: Boolean
                 get() = state.isRefreshing || lvpRestoreInProgress
 

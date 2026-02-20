@@ -55,6 +55,7 @@ import compose.icons.fontawesomeicons.solid.AnglesUp
 import compose.icons.fontawesomeicons.solid.Bars
 import compose.icons.fontawesomeicons.solid.Plus
 import dev.dimension.flare.R
+import dev.dimension.flare.common.ComposeInAppNotification
 import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.data.model.BottomBarBehavior
 import dev.dimension.flare.data.model.LocalAppearanceSettings
@@ -84,6 +85,7 @@ import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import kotlinx.coroutines.launch
 import moe.tlaster.precompose.molecule.producePresenter
+import org.koin.compose.koinInject
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
@@ -304,6 +306,14 @@ internal fun TimelineItemContent(
         )
     }
     val scope = rememberCoroutineScope()
+    val notification = koinInject<ComposeInAppNotification>()
+
+    LaunchedEffect(Unit) {
+        state.lvpRestoreFailedEvents.collect {
+            notification.message(R.string.lvp_restore_failed)
+        }
+    }
+
     RefreshContainer(
         modifier = modifier,
         onRefresh = {
