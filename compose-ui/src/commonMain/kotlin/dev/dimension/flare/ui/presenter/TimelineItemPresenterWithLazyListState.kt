@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.paging.LoadState
 import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.data.database.scroll.model.DbFeedScrollPosition
 import dev.dimension.flare.data.model.TimelineTabItem
@@ -79,7 +80,8 @@ public class TimelineItemPresenterWithLazyListState(
         val lazyListState = lazyStaggeredGridState ?: rememberLazyStaggeredGridState()
         val state = tabItemPresenter.body()
         var showNewToots by remember { mutableStateOf(false) }
-        var lastRefreshIndex by remember { mutableStateOf(0) }
+        var lastRefreshCount by remember { mutableStateOf(0) }
+        var lastPrependState by remember { mutableStateOf<LoadState>(LoadState.NotLoading(false)) }
         var newPostCount by remember { mutableStateOf(0) }
         var hasRestoredScroll by remember { mutableStateOf(false) }
         var lvpRestoreInProgress by remember { mutableStateOf(false) }
@@ -220,17 +222,21 @@ public class TimelineItemPresenterWithLazyListState(
 
         // Detect when new posts have been loaded at the top during a refresh
         state.listState.onSuccess {
-            LaunchedEffect(Unit) {
-                snapshotFlow { Pair(itemCount, lazyListState.firstVisibleItemIndex) }
+            LaunchedEffect(this) {
+                snapshotFlow { Pair(prependState, itemCount) }
                     .distinctUntilChanged()
-                    .collect { (currentItemCount, visibleIndex) ->
-                        // When itemCount increases and we're not at the top, new posts were added above
-                        if (currentItemCount > lastRefreshIndex && visibleIndex > 0 && hasRestoredScroll) {
+                    .collect { (currentPrependState, currentItemCount) ->
+                        val visibleIndex = lazyListState.firstVisibleItemIndex
+                        // When a prepend (newer posts) finishes and itemCount increased
+                        if (lastPrependState is LoadState.Loading && currentPrependState is LoadState.NotLoading &&
+                            currentItemCount > lastRefreshCount && visibleIndex > 0 && hasRestoredScroll
+                        ) {
                             showNewToots = true
-                            newPostCount = currentItemCount - lastRefreshIndex
-                            println("[$LVP_LOG_TAG] New posts detected: itemCount grew from $lastRefreshIndex to $currentItemCount while at index $visibleIndex")
+                            newPostCount = currentItemCount - lastRefreshCount
+                            println("[$LVP_LOG_TAG] New posts detected via prepend: itemCount grew from $lastRefreshCount to $currentItemCount while at index $visibleIndex")
                         }
-                        lastRefreshIndex = currentItemCount
+                        lastRefreshCount = currentItemCount
+                        lastPrependState = currentPrependState
                     }
             }
         }

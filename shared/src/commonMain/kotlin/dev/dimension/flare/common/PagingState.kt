@@ -46,6 +46,7 @@ public sealed class PagingState<T> {
         public abstract val itemCount: Int
         public abstract val isRefreshing: Boolean
         public abstract val appendState: LoadState
+        public abstract val prependState: LoadState
 
         public abstract operator fun get(index: Int): T?
 
@@ -65,6 +66,7 @@ public sealed class PagingState<T> {
             override val itemCount: Int = data.size,
             override val isRefreshing: Boolean = false,
             override val appendState: LoadState = LoadState.NotLoading(endOfPaginationReached = true),
+            override val prependState: LoadState = LoadState.NotLoading(endOfPaginationReached = true),
             private val onRefresh: suspend () -> Unit = {},
             private val onRetry: () -> Unit = {},
         ) : Success<T>() {
@@ -89,6 +91,7 @@ public sealed class PagingState<T> {
         internal data class PagingSuccess<T : Any>(
             private val data: LazyPagingItems<T>,
             override val appendState: LoadState,
+            override val prependState: LoadState,
         ) : Success<T>() {
             override val itemCount: Int
                 get() = data.itemCount
@@ -215,6 +218,7 @@ internal fun <T : Any> LazyPagingItems<T>.toPagingState(): PagingState<T> {
         return PagingState.Success.PagingSuccess(
             data = this,
             appendState = loadState.append,
+            prependState = loadState.prepend,
         )
     } else if (loadState.refresh == LoadState.Loading ||
         loadState.prepend == LoadState.Loading ||
