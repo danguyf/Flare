@@ -112,9 +112,13 @@ public class TimelineItemPresenterWithLazyListState(
                     snapshotFlow { refreshState }
                         .distinctUntilChanged()
                         .collect { currentRefreshState ->
+                            if (currentRefreshState is LoadState.Loading) {
+                                hasRestoredScroll = false
+                            }
+
                             val shouldRestore = (currentRefreshState !is LoadState.Loading) &&
                                 (itemCount > 0) &&
-                                (!hasRestoredScroll || lvpState.status == LvpState.Status.IDLE)
+                                !hasRestoredScroll
 
                             if (shouldRestore) {
                                 lvpState = lvpState.copy(status = LvpState.Status.RESTORING)
@@ -207,9 +211,10 @@ public class TimelineItemPresenterWithLazyListState(
         // Detect when new posts have been loaded at the top during a refresh
         state.listState.onSuccess {
             LaunchedEffect(this) {
-                snapshotFlow { Pair(prependState, itemCount) }
+                snapshotFlow { Triple(prependState, appendState, itemCount) }
                     .distinctUntilChanged()
-                    .collect { (currentPrependState, currentItemCount) ->
+                    .collect { (currentPrependState, currentAppendState, currentItemCount) ->
+                        println("[$LVP_LOG_TAG] Paging state changed: prepend=$currentPrependState, append=$currentAppendState, items=$currentItemCount")
                         val visibleIndex = lazyListState.firstVisibleItemIndex
                         if (newPostsState.lastPrependState is LoadState.Loading && currentPrependState is LoadState.NotLoading &&
                             currentItemCount > newPostsState.lastItemCount && visibleIndex > 0 && hasRestoredScroll
@@ -231,13 +236,20 @@ public class TimelineItemPresenterWithLazyListState(
         // Sync newPostsCount with scroll position (decrement as user scrolls up)
         LaunchedEffect(lazyListState.firstVisibleItemIndex) {
             if (newPostsState.showIndicator && lazyListState.firstVisibleItemIndex < newPostsState.count) {
-                newPostsState = newPostsState.copy(count = lazyListState.firstVisibleItemIndex)
+                val newCount = lazyListState.firstVisibleItemIndex
+                newPostsState = newPostsState.copy(
+                    count = newCount,
+                    showIndicator = newCount > 0
+                )
             }
         }
 
         LaunchedEffect(isAtTheTop, newPostsState.showIndicator) {
-            if (isAtTheTop) newPostsState = newPostsState.copy(showIndicator = false)
-            if (!newPostsState.showIndicator) newPostsState = newPostsState.copy(count = 0)
+            if (isAtTheTop) {
+                newPostsState = newPostsState.copy(showIndicator = false, count = 0)
+            } else if (!newPostsState.showIndicator) {
+                newPostsState = newPostsState.copy(count = 0)
+            }
         }
 
         return object : State, TimelineItemPresenter.State by state {
