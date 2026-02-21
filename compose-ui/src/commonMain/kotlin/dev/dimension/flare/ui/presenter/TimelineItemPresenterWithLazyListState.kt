@@ -257,7 +257,6 @@ public class TimelineItemPresenterWithLazyListState(
                 newPostsState =
                     newPostsState.copy(
                         count = newCount,
-                        showIndicator = newCount > 0,
                     )
             }
         }
