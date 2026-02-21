@@ -310,7 +310,7 @@ internal fun TimelineItemContent(
 
     LaunchedEffect(Unit) {
         state.lvpRestoreFailedEvents.collect {
-            notification.message(R.string.lvp_restore_failed)
+            notification.message(R.string.lvp_restore_failed, success = false)
         }
     }
 
