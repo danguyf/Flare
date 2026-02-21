@@ -61,7 +61,7 @@ public class TimelineItemPresenterWithLazyListState(
         TimelineItemPresenter(timelineTabItem)
     }
 
-    private val _lvpRestoreFailedEvents: kotlinx.coroutines.flow.MutableSharedFlow<Unit> =
+    private val lvpRestoreFailedEventsSource: kotlinx.coroutines.flow.MutableSharedFlow<Unit> =
         kotlinx.coroutines.flow.MutableSharedFlow(extraBufferCapacity = 1)
 
     private suspend fun restoreLvpInFeed(
@@ -76,11 +76,10 @@ public class TimelineItemPresenterWithLazyListState(
         val statusKey = scrollPosition.lastViewedStatusKey
         if (sortId <= 0 || statusKey == null) return -1
 
-        println("[$LVP_LOG_TAG] Saved LVP: statusKey=$statusKey, sortId=$sortId")
-
-        val foundIndex = (0 until itemCount).firstOrNull { i ->
-            (successState.peek(i)?.content as? StatusContent)?.statusKey == statusKey
-        } ?: -1
+        val foundIndex =
+            (0 until itemCount).firstOrNull { i ->
+                (successState.peek(i)?.content as? StatusContent)?.statusKey == statusKey
+            } ?: -1
 
         return if (foundIndex >= 0) {
             println("[$LVP_LOG_TAG] LVP found at index=$foundIndex, scrolling to it")
@@ -116,9 +115,10 @@ public class TimelineItemPresenterWithLazyListState(
                                 hasRestoredScroll = false
                             }
 
-                            val shouldRestore = (currentRefreshState !is LoadState.Loading) &&
-                                (itemCount > 0) &&
-                                !hasRestoredScroll
+                            val shouldRestore =
+                                (currentRefreshState !is LoadState.Loading) &&
+                                    (itemCount > 0) &&
+                                    !hasRestoredScroll
 
                             if (shouldRestore) {
                                 lvpState = lvpState.copy(status = LvpState.Status.RESTORING)
@@ -158,8 +158,10 @@ public class TimelineItemPresenterWithLazyListState(
                                     lvpState = lvpState.copy(lastObservedItemCount = currentItemCount)
                                     println("[$LVP_LOG_TAG] ItemCount grew to $currentItemCount, paging still active")
                                 } else if (currentItemCount == lvpState.lastObservedItemCount && refreshState !is LoadState.Loading) {
-                                    _lvpRestoreFailedEvents.tryEmit(Unit)
-                                    println("[$LVP_LOG_TAG] ItemCount stable at $currentItemCount and not refreshing - paging stopped, LVP not found, showing notification")
+                                    lvpRestoreFailedEventsSource.tryEmit(Unit)
+                                    println(
+                                        "[$LVP_LOG_TAG] ItemCount stable at $currentItemCount and not refreshing - paging stopped, LVP not found, showing notification",
+                                    )
                                     lvpState = lvpState.copy(status = LvpState.Status.IDLE)
                                 }
                             }
@@ -175,7 +177,9 @@ public class TimelineItemPresenterWithLazyListState(
         LaunchedEffect(lazyListState, state.listState) {
             snapshotFlow {
                 val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
-                if (visibleItems.isEmpty()) -1 else {
+                if (visibleItems.isEmpty()) {
+                    -1
+                } else {
                     val viewportTop = 0
                     visibleItems.firstOrNull { it.offset.y >= viewportTop }?.index ?: visibleItems.firstOrNull()?.index ?: -1
                 }
@@ -197,7 +201,10 @@ public class TimelineItemPresenterWithLazyListState(
                                     pagingKey = timelineTabItem.key,
                                     lastViewedStatusKey = status.statusKey,
                                     lastViewedSortId = status.createdAt.value.toEpochMilliseconds(),
-                                    lastUpdated = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+                                    lastUpdated =
+                                        kotlin.time.Clock.System
+                                            .now()
+                                            .toEpochMilliseconds(),
                                 ),
                             )
                             lastSavedIndex = index
@@ -214,15 +221,16 @@ public class TimelineItemPresenterWithLazyListState(
                 snapshotFlow { Triple(prependState, appendState, itemCount) }
                     .distinctUntilChanged()
                     .collect { (currentPrependState, currentAppendState, currentItemCount) ->
-                        println("[$LVP_LOG_TAG] Paging state changed: prepend=$currentPrependState, append=$currentAppendState, items=$currentItemCount")
                         val visibleIndex = lazyListState.firstVisibleItemIndex
-                        if (newPostsState.lastPrependState is LoadState.Loading && currentPrependState is LoadState.NotLoading &&
-                            currentItemCount > newPostsState.lastItemCount && visibleIndex > 0 && hasRestoredScroll
+                        if (newPostsState.lastPrependState is LoadState.Loading &&
+                            currentPrependState is LoadState.NotLoading &&
+                            currentItemCount > newPostsState.lastItemCount &&
+                            visibleIndex > 0 &&
+                            hasRestoredScroll
                         ) {
                             val newCount = currentItemCount - newPostsState.lastItemCount
                             val totalNewAbove = newPostsState.count + newCount
                             newPostsState = newPostsState.copy(showIndicator = true, count = totalNewAbove)
-                            println("[$LVP_LOG_TAG] New posts detected via prepend: itemCount grew from ${newPostsState.lastItemCount} to $currentItemCount while at index $visibleIndex")
                         }
                         newPostsState = newPostsState.copy(lastItemCount = currentItemCount, lastPrependState = currentPrependState)
                     }
@@ -246,10 +254,11 @@ public class TimelineItemPresenterWithLazyListState(
         LaunchedEffect(lazyListState.firstVisibleItemIndex) {
             if (newPostsState.showIndicator && lazyListState.firstVisibleItemIndex < newPostsState.count) {
                 val newCount = lazyListState.firstVisibleItemIndex
-                newPostsState = newPostsState.copy(
-                    count = newCount,
-                    showIndicator = newCount > 0
-                )
+                newPostsState =
+                    newPostsState.copy(
+                        count = newCount,
+                        showIndicator = newCount > 0,
+                    )
             }
         }
 
@@ -265,7 +274,7 @@ public class TimelineItemPresenterWithLazyListState(
             override val showNewToots = newPostsState.showIndicator
             override val lazyListState = lazyListState
             override val newPostsCount = newPostsState.count
-            override val lvpRestoreFailedEvents = _lvpRestoreFailedEvents
+            override val lvpRestoreFailedEvents = lvpRestoreFailedEventsSource
             override val isRefreshing: Boolean
                 get() = state.isRefreshing || lvpState.status == LvpState.Status.RESTORING
 

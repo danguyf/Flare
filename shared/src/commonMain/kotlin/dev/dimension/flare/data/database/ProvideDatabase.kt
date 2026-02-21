@@ -32,4 +32,3 @@ internal fun provideScrollPositionDatabase(driverFactory: DriverFactory): Scroll
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()
-

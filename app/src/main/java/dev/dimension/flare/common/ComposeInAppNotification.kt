@@ -43,7 +43,7 @@ internal class ComposeInAppNotification : InAppNotification {
 
     fun message(
         @StringRes messageId: Int,
-        success: Boolean = true
+        success: Boolean = true,
     ) {
         _source.value = Event(Notification.StringNotification(messageId, success = success))
     }

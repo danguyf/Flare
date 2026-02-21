@@ -40,4 +40,3 @@ internal suspend fun <R> ScrollPositionDatabase.connect(block: suspend () -> R):
             block.invoke()
         }
     }
-

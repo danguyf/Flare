@@ -12,4 +12,3 @@ public data class DbFeedScrollPosition(
     val lastViewedSortId: Long?,
     val lastUpdated: Long,
 )
-

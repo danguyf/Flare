@@ -16,6 +16,3 @@ internal interface ScrollPositionDao {
     @Query("DELETE FROM feed_scroll_position WHERE pagingKey = :pagingKey")
     suspend fun deleteScrollPosition(pagingKey: String)
 }
-
-
-
