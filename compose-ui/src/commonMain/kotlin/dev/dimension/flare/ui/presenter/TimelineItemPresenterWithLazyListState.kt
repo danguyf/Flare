@@ -3,12 +3,15 @@ package dev.dimension.flare.ui.presenter
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.paging.LoadState
@@ -39,8 +42,6 @@ private data class LvpState(
 private data class NewPostsState(
     val showIndicator: Boolean = false,
     val count: Int = 0,
-    val lastItemCount: Int = 0,
-    val lastPrependState: LoadState = LoadState.NotLoading(endOfPaginationReached = false),
 )
 
 public class TimelineItemPresenterWithLazyListState(
@@ -96,6 +97,7 @@ public class TimelineItemPresenterWithLazyListState(
     override fun body(): State {
         val lazyListState = lazyStaggeredGridState ?: rememberLazyStaggeredGridState()
         val state = tabItemPresenter.body()
+        val scope = rememberCoroutineScope()
 
         var lvpState by remember { mutableStateOf(LvpState()) }
         var newPostsState by remember { mutableStateOf(NewPostsState()) }
@@ -104,98 +106,32 @@ public class TimelineItemPresenterWithLazyListState(
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
 
-        LaunchedEffect(state.listState) {
-            state.listState.onSuccess {
-                // Restore scroll position on initial load and after refresh completes
-                launch {
-                    snapshotFlow { refreshState }
-                        .distinctUntilChanged()
-                        .collect { currentRefreshState ->
-                            if (currentRefreshState is LoadState.Loading) {
-                                hasRestoredScroll = false
-                            }
-
-                            val shouldRestore =
-                                (currentRefreshState !is LoadState.Loading) &&
-                                    (itemCount > 0) &&
-                                    !hasRestoredScroll
-
-                            if (shouldRestore) {
-                                lvpState = lvpState.copy(status = LvpState.Status.RESTORING)
-                                try {
-                                    val scrollPosition = scrollPositionRepo.getScrollPosition(timelineTabItem.key)
-                                    val lvpIndex = restoreLvpInFeed(lazyListState, this@onSuccess, scrollPosition)
-
-                                    if (lvpIndex >= 0) {
-                                        if (lvpIndex > 0) {
-                                            newPostsState = newPostsState.copy(showIndicator = true, count = lvpIndex)
-                                            println("[$LVP_LOG_TAG] New posts indicator triggered: $lvpIndex posts above LVP")
-                                        }
-                                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
-                                    } else if (scrollPosition != null) {
-                                        lvpState = lvpState.copy(status = LvpState.Status.NOT_FOUND, lastObservedItemCount = itemCount)
-                                        println("[$LVP_LOG_TAG] LVP not found, monitoring itemCount to detect when paging stops")
-                                    } else {
-                                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
-                                    }
-                                    hasRestoredScroll = true
-                                } catch (e: Exception) {
-                                    val errorContext = if (!hasRestoredScroll) "initial load" else "refresh"
-                                    println("[$LVP_LOG_TAG] Error restoring LVP on $errorContext: ${e.message}")
-                                    hasRestoredScroll = true
-                                    lvpState = lvpState.copy(status = LvpState.Status.IDLE)
-                                }
-                            }
-                        }
-                }
-
-                // Monitor itemCount to detect when paging has stopped
-                launch {
-                    snapshotFlow { itemCount }
-                        .collect { currentItemCount ->
-                            if (lvpState.status == LvpState.Status.NOT_FOUND) {
-                                if (currentItemCount > lvpState.lastObservedItemCount) {
-                                    lvpState = lvpState.copy(lastObservedItemCount = currentItemCount)
-                                    println("[$LVP_LOG_TAG] ItemCount grew to $currentItemCount, paging still active")
-                                } else if (currentItemCount == lvpState.lastObservedItemCount && refreshState !is LoadState.Loading) {
-                                    lvpRestoreFailedEventsSource.tryEmit(Unit)
-                                    println(
-                                        "[$LVP_LOG_TAG] ItemCount stable at $currentItemCount and not refreshing - paging stopped, LVP not found, showing notification",
-                                    )
-                                    lvpState = lvpState.copy(status = LvpState.Status.IDLE)
-                                }
-                            }
-                        }
+        val currentVisibleIndexState = remember {
+            derivedStateOf {
+                val topItem = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull()
+                // Ensure layoutInfo is in sync with the actual scroll position to avoid race conditions during refreshes
+                if (topItem != null && topItem.index == lazyListState.firstVisibleItemIndex) {
+                    // Item is "effectively" visible if it's more than 50% in view
+                    if (topItem.offset.y <= -(topItem.size.height / 2)) {
+                        topItem.index + 1
+                    } else {
+                        topItem.index
+                    }
+                } else {
+                    lazyListState.firstVisibleItemIndex
                 }
             }
         }
+        val currentVisibleIndex by currentVisibleIndexState
 
-        var lastSavedIndex by remember { mutableStateOf(-1) }
-        var feedInitiallyLoaded by remember { mutableStateOf(false) }
-
-        // Save scroll position when the list is in Success state.
-        LaunchedEffect(lazyListState, state.listState) {
-            snapshotFlow {
-                val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
-                if (visibleItems.isEmpty()) {
-                    -1
-                } else {
-                    val viewportTop = 0
-                    visibleItems.firstOrNull { it.offset.y >= viewportTop }?.index ?: visibleItems.firstOrNull()?.index ?: -1
-                }
-            }.distinctUntilChanged()
-                .collect { index ->
-                    val successState = state.listState as? TimelineSuccess ?: return@collect
-                    if (!feedInitiallyLoaded && index >= 0) {
-                        feedInitiallyLoaded = true
-                        return@collect
-                    }
-                    if (index < 0 || index == lastSavedIndex) return@collect
-
-                    try {
-                        val item = successState.peek(index)
-                        if (item != null) {
-                            val status = item.content as? StatusContent ?: return@collect
+        val saveCurrentScrollPosition = {
+            // Use the actual first visible item index for LVP saving, ignoring the 50% indicator logic.
+            val index = lazyListState.firstVisibleItemIndex
+            if (index >= 0) {
+                val successState = state.listState as? TimelineSuccess
+                successState?.peek(index)?.let { item ->
+                    (item.content as? StatusContent)?.let { status ->
+                        scope.launch {
                             scrollPositionRepo.saveScrollPosition(
                                 DbFeedScrollPosition(
                                     pagingKey = timelineTabItem.key,
@@ -207,13 +143,94 @@ public class TimelineItemPresenterWithLazyListState(
                                             .toEpochMilliseconds(),
                                 ),
                             )
-                            lastSavedIndex = index
                         }
-                    } catch (e: Exception) {
-                        // Silently fail
                     }
                 }
+            }
         }
+
+        val currentSaveFunction by rememberUpdatedState(saveCurrentScrollPosition)
+
+        DisposableEffect(Unit) {
+            onDispose {
+                currentSaveFunction()
+            }
+        }
+
+        LaunchedEffect(state.listState) {
+            state.listState.onSuccess {
+                val successState = this
+                // Restore scroll position on initial load and after refresh completes
+                launch {
+                    snapshotFlow { Triple(refreshState, itemCount, appendState) }
+                        .distinctUntilChanged()
+                        .collect { (currentRefreshState, currentItemCount, currentAppendState) ->
+                            if (currentRefreshState is LoadState.Loading) {
+                                hasRestoredScroll = false
+                                lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                                return@collect
+                            }
+
+                            val shouldRestore =
+                                (currentItemCount > 0) &&
+                                    !hasRestoredScroll &&
+                                    (lvpState.status == LvpState.Status.IDLE || lvpState.status == LvpState.Status.NOT_FOUND)
+
+                            if (shouldRestore) {
+                                // If NOT_FOUND, only re-scan if itemCount grew to avoid busy loops
+                                if (lvpState.status == LvpState.Status.NOT_FOUND && currentItemCount <= lvpState.lastObservedItemCount) {
+                                    // Check if we reached the end of the feed
+                                    if (currentAppendState is LoadState.NotLoading && currentAppendState.endOfPaginationReached) {
+                                        lvpRestoreFailedEventsSource.tryEmit(Unit)
+                                        hasRestoredScroll = true
+                                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                                    }
+                                    return@collect
+                                }
+
+                                lvpState = lvpState.copy(status = LvpState.Status.RESTORING)
+                                try {
+                                    val scrollPosition = scrollPositionRepo.getScrollPosition(timelineTabItem.key)
+                                    if (scrollPosition == null) {
+                                        hasRestoredScroll = true
+                                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                                        return@collect
+                                    }
+
+                                    val lvpIndex = restoreLvpInFeed(lazyListState, successState, scrollPosition)
+
+                                    if (lvpIndex >= 0) {
+                                        if (lvpIndex > 0) {
+                                            newPostsState = newPostsState.copy(showIndicator = true, count = lvpIndex)
+                                            println("[$LVP_LOG_TAG] New posts indicator triggered: $lvpIndex posts above LVP")
+                                        }
+                                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                                        hasRestoredScroll = true
+                                    } else {
+                                        lvpState = lvpState.copy(status = LvpState.Status.NOT_FOUND, lastObservedItemCount = currentItemCount)
+                                        println("[$LVP_LOG_TAG] LVP not found, monitoring itemCount to detect when paging stops")
+                                        
+                                        // Final check for end of road
+                                        if (currentAppendState is LoadState.NotLoading && currentAppendState.endOfPaginationReached) {
+                                            lvpRestoreFailedEventsSource.tryEmit(Unit)
+                                            hasRestoredScroll = true
+                                            lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    val errorContext = if (!hasRestoredScroll) "initial load" else "refresh"
+                                    println("[$LVP_LOG_TAG] Error restoring LVP on $errorContext: ${e.message}")
+                                    hasRestoredScroll = true
+                                    lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                                }
+                            }
+                        }
+                }
+            }
+        }
+
+        var lastItemCount by remember { mutableStateOf(0) }
+        var lastPrependState by remember { mutableStateOf<LoadState>(LoadState.NotLoading(endOfPaginationReached = false)) }
 
         // Detect when new posts have been loaded at the top during a refresh
         state.listState.onSuccess {
@@ -221,51 +238,40 @@ public class TimelineItemPresenterWithLazyListState(
                 snapshotFlow { Triple(prependState, appendState, itemCount) }
                     .distinctUntilChanged()
                     .collect { (currentPrependState, currentAppendState, currentItemCount) ->
-                        val visibleIndex = lazyListState.firstVisibleItemIndex
-                        if (newPostsState.lastPrependState is LoadState.Loading &&
+                        val visibleIndex = currentVisibleIndexState.value
+                        if (lastPrependState is LoadState.Loading &&
                             currentPrependState is LoadState.NotLoading &&
-                            currentItemCount > newPostsState.lastItemCount &&
+                            currentItemCount > lastItemCount &&
                             visibleIndex > 0 &&
                             hasRestoredScroll
                         ) {
-                            val newCount = currentItemCount - newPostsState.lastItemCount
+                            val newCount = currentItemCount - lastItemCount
                             val totalNewAbove = newPostsState.count + newCount
                             newPostsState = newPostsState.copy(showIndicator = true, count = totalNewAbove)
                         }
-                        newPostsState = newPostsState.copy(lastItemCount = currentItemCount, lastPrependState = currentPrependState)
+                        lastItemCount = currentItemCount
+                        lastPrependState = currentPrependState
                     }
             }
         }
 
-        val isAtTheTop by remember {
-            derivedStateOf {
-                val firstItem = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
-                if (firstItem != null) {
-                    // Check if more than 50% of the first item is visible
-                    // offset.y is negative when the top of the item is scrolled off-screen
-                    firstItem.offset.y > -(firstItem.size.height / 2)
-                } else {
-                    lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0
-                }
-            }
-        }
-
-        // Sync newPostsCount with scroll position (decrement as user scrolls up)
-        LaunchedEffect(lazyListState.firstVisibleItemIndex) {
-            if (newPostsState.showIndicator && lazyListState.firstVisibleItemIndex < newPostsState.count) {
-                val newCount = lazyListState.firstVisibleItemIndex
+        // Sync newPostsCount with scroll position (decrement once 50% in view)
+        LaunchedEffect(currentVisibleIndex, hasRestoredScroll) {
+            if (hasRestoredScroll && newPostsState.showIndicator && currentVisibleIndex < newPostsState.count) {
                 newPostsState =
                     newPostsState.copy(
-                        count = newCount,
+                        count = currentVisibleIndex,
                     )
             }
         }
 
-        LaunchedEffect(isAtTheTop, newPostsState.showIndicator) {
-            if (isAtTheTop) {
-                newPostsState = newPostsState.copy(showIndicator = false, count = 0)
-            } else if (!newPostsState.showIndicator) {
-                newPostsState = newPostsState.copy(count = 0)
+        LaunchedEffect(currentVisibleIndex, newPostsState.showIndicator, hasRestoredScroll) {
+            if (hasRestoredScroll) {
+                if (currentVisibleIndex == 0) {
+                    newPostsState = newPostsState.copy(showIndicator = false, count = 0)
+                } else if (!newPostsState.showIndicator) {
+                    newPostsState = newPostsState.copy(count = 0)
+                }
             }
         }
 
@@ -279,6 +285,16 @@ public class TimelineItemPresenterWithLazyListState(
 
             override fun onNewTootsShown() {
                 newPostsState = newPostsState.copy(showIndicator = false)
+            }
+
+            override fun refreshSync() {
+                saveCurrentScrollPosition()
+                state.refreshSync()
+            }
+
+            override suspend fun refreshSuspend() {
+                saveCurrentScrollPosition()
+                state.refreshSuspend()
             }
         }
     }
