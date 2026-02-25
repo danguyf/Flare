@@ -21,6 +21,8 @@ import dev.dimension.flare.data.model.TimelineTabItem
 import dev.dimension.flare.data.repository.ScrollPositionRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
@@ -30,14 +32,15 @@ private const val LVP_RESTORE_LIMIT = 500
 private typealias TimelineSuccess = dev.dimension.flare.common.PagingState.Success<dev.dimension.flare.ui.model.UiTimeline>
 private typealias StatusContent = dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status
 
-private data class LvpState(
-    val status: Status = Status.IDLE,
+private data class RestorationState(
+    val status: Status = Status.READY,
     val lastObservedItemCount: Int = 0,
 ) {
     enum class Status {
-        IDLE,
+        READY,
         RESTORING,
         NOT_FOUND,
+        COMPLETED,
     }
 }
 
@@ -101,9 +104,8 @@ public class TimelineItemPresenterWithLazyListState(
         val state = tabItemPresenter.body()
         val scope = rememberCoroutineScope()
 
-        var lvpState by remember { mutableStateOf(LvpState()) }
+        var restorationState by remember { mutableStateOf(RestorationState()) }
         var newPostsState by remember { mutableStateOf(NewPostsState()) }
-        var hasRestoredScroll by remember { mutableStateOf(false) }
 
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
@@ -169,22 +171,21 @@ public class TimelineItemPresenterWithLazyListState(
                 } else null
             }.collect { data ->
                 val (ls, info) = data ?: run {
-                    hasRestoredScroll = false
-                    lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                    restorationState = RestorationState(status = RestorationState.Status.READY)
                     return@collect
                 }
                 val (itemCount, isRefreshing, appendState) = info
 
                 if (isRefreshing) {
-                    if (hasRestoredScroll) {
+                    if (restorationState.status == RestorationState.Status.COMPLETED) {
                         println("[$LVP_LOG_TAG] Refresh detected, resetting restoration gate")
-                        hasRestoredScroll = false
-                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                        restorationState = RestorationState(status = RestorationState.Status.READY)
+                        newPostsState = NewPostsState()
                     }
                     return@collect
                 }
 
-                if (hasRestoredScroll || itemCount == 0) return@collect
+                if (restorationState.status == RestorationState.Status.COMPLETED || itemCount == 0) return@collect
 
                 val giveUpSearch = { reason: String ->
                     println("[$LVP_LOG_TAG] $reason. Stopping search.")
@@ -194,31 +195,29 @@ public class TimelineItemPresenterWithLazyListState(
                     if (visIndex > 0) {
                         newPostsState = newPostsState.copy(showIndicator = true, count = visIndex)
                     }
-                    hasRestoredScroll = true
-                    lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                    restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
                 }
 
                 // Limit check: if we've loaded too many posts without finding LVP, give up.
-                if (itemCount > LVP_RESTORE_LIMIT && lvpState.status != LvpState.Status.IDLE) {
+                if (itemCount > LVP_RESTORE_LIMIT && restorationState.status != RestorationState.Status.READY) {
                     giveUpSearch("LVP not found within $LVP_RESTORE_LIMIT posts")
                     return@collect
                 }
 
                 // Re-scan check: only re-run if itemCount grew to avoid busy loops
-                if (lvpState.status == LvpState.Status.NOT_FOUND && itemCount <= lvpState.lastObservedItemCount) {
+                if (restorationState.status == RestorationState.Status.NOT_FOUND && itemCount <= restorationState.lastObservedItemCount) {
                     if (appendState is LoadState.NotLoading && appendState.endOfPaginationReached) {
                         giveUpSearch("Feed exhausted, LVP not found")
                     }
                     return@collect
                 }
 
-                lvpState = lvpState.copy(status = LvpState.Status.RESTORING)
+                restorationState = restorationState.copy(status = RestorationState.Status.RESTORING)
                 try {
                     val scrollPosition = scrollPositionRepo.getScrollPosition(timelineTabItem.key)
                     if (scrollPosition == null) {
                         println("[$LVP_LOG_TAG] No saved LVP found in DB")
-                        hasRestoredScroll = true
-                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                        restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
                         return@collect
                     }
 
@@ -226,11 +225,15 @@ public class TimelineItemPresenterWithLazyListState(
                     if (lvpIndex >= 0) {
                         if (lvpIndex > 0) {
                             newPostsState = newPostsState.copy(showIndicator = true, count = lvpIndex)
+                            // Wait for the scroll to actually be reflected in the UI before completing
+                            // to avoid the indicator-reset logic triggering while index is still 0.
+                            snapshotFlow { currentVisibleIndexState.value }
+                                .filter { it > 0 }
+                                .first()
                         }
-                        hasRestoredScroll = true
-                        lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                        restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
                     } else {
-                        lvpState = lvpState.copy(status = LvpState.Status.NOT_FOUND, lastObservedItemCount = itemCount)
+                        restorationState = restorationState.copy(status = RestorationState.Status.NOT_FOUND, lastObservedItemCount = itemCount)
                         if (appendState is LoadState.NotLoading && appendState.endOfPaginationReached) {
                             giveUpSearch("Feed exhausted, LVP not found")
                         }
@@ -238,8 +241,7 @@ public class TimelineItemPresenterWithLazyListState(
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     println("[$LVP_LOG_TAG] Error during LVP restoration: ${e.message}")
-                    hasRestoredScroll = true
-                    lvpState = lvpState.copy(status = LvpState.Status.IDLE)
+                    restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
                 }
             }
         }
@@ -258,7 +260,7 @@ public class TimelineItemPresenterWithLazyListState(
                             currentPrependState is LoadState.NotLoading &&
                             currentItemCount > lastObservedIndicatorItemCount &&
                             visibleIndex > 0 &&
-                            hasRestoredScroll
+                            restorationState.status == RestorationState.Status.COMPLETED
                         ) {
                             val newCount = currentItemCount - lastObservedIndicatorItemCount
                             val totalNewAbove = newPostsState.count + newCount
@@ -271,9 +273,9 @@ public class TimelineItemPresenterWithLazyListState(
         }
 
         // Sync newPostsCount with scroll position (decrement once 50% in view)
-        LaunchedEffect(currentVisibleIndexState.value, hasRestoredScroll) {
+        LaunchedEffect(currentVisibleIndexState.value, restorationState.status) {
             val currentVisibleIndex = currentVisibleIndexState.value
-            if (hasRestoredScroll && newPostsState.showIndicator && currentVisibleIndex < newPostsState.count) {
+            if (restorationState.status == RestorationState.Status.COMPLETED && newPostsState.showIndicator && currentVisibleIndex < newPostsState.count) {
                 newPostsState =
                     newPostsState.copy(
                         count = currentVisibleIndex,
@@ -281,9 +283,9 @@ public class TimelineItemPresenterWithLazyListState(
             }
         }
 
-        LaunchedEffect(currentVisibleIndexState.value, newPostsState.showIndicator, hasRestoredScroll) {
+        LaunchedEffect(currentVisibleIndexState.value, newPostsState.showIndicator, restorationState.status) {
             val currentVisibleIndex = currentVisibleIndexState.value
-            if (hasRestoredScroll) {
+            if (restorationState.status == RestorationState.Status.COMPLETED) {
                 if (currentVisibleIndex == 0) {
                     newPostsState = newPostsState.copy(showIndicator = false, count = 0)
                 } else if (!newPostsState.showIndicator) {
@@ -298,7 +300,7 @@ public class TimelineItemPresenterWithLazyListState(
             override val newPostsCount = newPostsState.count
             override val lvpRestoreFailedEvents = lvpRestoreFailedEventsSource
             override val isRefreshing: Boolean
-                get() = state.isRefreshing || lvpState.status == LvpState.Status.RESTORING
+                get() = state.isRefreshing || restorationState.status == RestorationState.Status.RESTORING
 
             override fun onNewTootsShown() {
                 newPostsState = newPostsState.copy(showIndicator = false)
@@ -306,11 +308,15 @@ public class TimelineItemPresenterWithLazyListState(
 
             override fun refreshSync() {
                 saveCurrentScrollPosition()
+                restorationState = RestorationState(status = RestorationState.Status.READY)
+                newPostsState = NewPostsState()
                 state.refreshSync()
             }
 
             override suspend fun refreshSuspend() {
                 saveCurrentScrollPosition()
+                restorationState = RestorationState(status = RestorationState.Status.READY)
+                newPostsState = NewPostsState()
                 state.refreshSuspend()
             }
         }
