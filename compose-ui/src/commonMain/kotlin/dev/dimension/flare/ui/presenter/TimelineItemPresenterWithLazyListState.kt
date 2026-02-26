@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 private const val LVP_LOG_TAG = "LVP_REFRESH"
-private const val LVP_RESTORE_LIMIT = 500
+private const val LVP_RESTORE_LIMIT = 750
 
 private typealias TimelineSuccess = dev.dimension.flare.common.PagingState.Success<dev.dimension.flare.ui.model.UiTimeline>
 private typealias StatusContent = dev.dimension.flare.ui.model.UiTimeline.ItemContent.Status
@@ -106,6 +106,7 @@ public class TimelineItemPresenterWithLazyListState(
 
         var restorationState by remember { mutableStateOf(RestorationState()) }
         var newPostsState by remember { mutableStateOf(NewPostsState()) }
+        var lastObservedIndicatorItemCount by remember { mutableStateOf(0) }
 
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
@@ -181,6 +182,7 @@ public class TimelineItemPresenterWithLazyListState(
                         println("[$LVP_LOG_TAG] Refresh detected, resetting restoration gate")
                         restorationState = RestorationState(status = RestorationState.Status.READY)
                         newPostsState = NewPostsState()
+                        lastObservedIndicatorItemCount = 0
                     }
                     return@collect
                 }
@@ -228,7 +230,7 @@ public class TimelineItemPresenterWithLazyListState(
                             // Wait for the scroll to actually be reflected in the UI before completing
                             // to avoid the indicator-reset logic triggering while index is still 0.
                             snapshotFlow { currentVisibleIndexState.value }
-                                .filter { it > 0 }
+                                .filter { it >= lvpIndex }
                                 .first()
                         }
                         restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
@@ -246,7 +248,6 @@ public class TimelineItemPresenterWithLazyListState(
             }
         }
 
-        var lastObservedIndicatorItemCount by remember { mutableStateOf(0) }
         var lastPrependState by remember { mutableStateOf<LoadState>(LoadState.NotLoading(endOfPaginationReached = false)) }
 
         // Detect when new posts have been loaded at the top during a refresh
@@ -256,7 +257,11 @@ public class TimelineItemPresenterWithLazyListState(
                     .distinctUntilChanged()
                     .collect { (currentPrependState, currentAppendState, currentItemCount) ->
                         val visibleIndex = currentVisibleIndexState.value
-                        if (lastPrependState is LoadState.Loading &&
+                        if (lastObservedIndicatorItemCount == 0) {
+                            if (currentItemCount > 0) {
+                                lastObservedIndicatorItemCount = currentItemCount
+                            }
+                        } else if (lastPrependState is LoadState.Loading &&
                             currentPrependState is LoadState.NotLoading &&
                             currentItemCount > lastObservedIndicatorItemCount &&
                             visibleIndex > 0 &&
@@ -310,6 +315,7 @@ public class TimelineItemPresenterWithLazyListState(
                 saveCurrentScrollPosition()
                 restorationState = RestorationState(status = RestorationState.Status.READY)
                 newPostsState = NewPostsState()
+                lastObservedIndicatorItemCount = 0
                 state.refreshSync()
             }
 
@@ -317,6 +323,7 @@ public class TimelineItemPresenterWithLazyListState(
                 saveCurrentScrollPosition()
                 restorationState = RestorationState(status = RestorationState.Status.READY)
                 newPostsState = NewPostsState()
+                lastObservedIndicatorItemCount = 0
                 state.refreshSuspend()
             }
         }
