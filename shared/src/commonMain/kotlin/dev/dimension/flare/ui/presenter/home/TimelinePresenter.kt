@@ -134,12 +134,17 @@ public abstract class TimelinePresenter :
         ).flow
 
     @Composable
-    final override fun body(): TimelineState {
+    final override fun body(): TimelineState = body(isActive = true)
+
+    @Composable
+    public fun body(isActive: Boolean): TimelineState {
         val scope = rememberCoroutineScope()
-        val listState =
-            remember {
-                createPager(scope)
-            }.cachePagingState()
+        val pager = remember { createPager(scope) }
+        val listState = if (isActive) {
+            pager.cachePagingState()
+        } else {
+            remember { PagingState.Empty<UiTimeline> {} }
+        }
         return object : TimelineState {
             override val listState = listState
 

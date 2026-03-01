@@ -31,8 +31,11 @@ public class TimelineItemPresenter(
     }
 
     @Composable
-    override fun body(): State {
-        val state = timelinePresenter.body()
+    override fun body(): State = body(isActive = true)
+
+    @Composable
+    public fun body(isActive: Boolean): State {
+        val state = timelinePresenter.body(isActive)
         val badge = badgePresenter.body()
         val scope = rememberCoroutineScope()
         return object : State {
