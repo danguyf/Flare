@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.koinInject
 
 private const val LVP_LOG_TAG = "LVP_REFRESH"
@@ -155,7 +154,8 @@ public class TimelineItemPresenterWithLazyListState(
                             pagingKey = timelineTabItem.key,
                             lastViewedStatusKey = status.statusKey,
                             lastViewedSortId = status.createdAt.value.toEpochMilliseconds(),
-                            lastUpdated = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+                            lastUpdated = kotlin.time.Clock.System.now()
+                                .toEpochMilliseconds(),
                         ),
                     )
                 } else {
@@ -164,28 +164,28 @@ public class TimelineItemPresenterWithLazyListState(
             }
         }
 
+        val currentSaveFunction by rememberUpdatedState(::saveCurrentScrollPositionSync)
+
         DisposableEffect(Unit) {
             onDispose {
                 scope.launch {
-                    saveCurrentScrollPositionSync()
+                    currentSaveFunction()
                 }
             }
         }
 
         // Separate Effect to monitor when the scroll actually reflects the target index.
         // Restoration is only marked COMPLETED once the UI layout has finished moving to the target.
-        // This solves the race condition where auto-hide logic clears the indicator prematurely.
+        // This solves the race condition where Bug 1 auto-hide logic clears the indicator prematurely.
         LaunchedEffect(restorationState.status, restorationState.targetIndex) {
             if (restorationState.status == RestorationState.Status.RESTORING && restorationState.targetIndex >= 0) {
                 println("[$LVP_LOG_TAG] Waiting for layout confirmation of scroll to index ${restorationState.targetIndex}")
-                withTimeoutOrNull(5000) {
-                    snapshotFlow { 
-                        lazyListState.layoutInfo.visibleItemsInfo.any { it.index == restorationState.targetIndex } ||
-                        lazyListState.firstVisibleItemIndex >= restorationState.targetIndex
-                    }
-                    .filter { it }
-                    .first()
+                snapshotFlow {
+                    lazyListState.layoutInfo.visibleItemsInfo.any { it.index == restorationState.targetIndex } ||
+                    lazyListState.firstVisibleItemIndex >= restorationState.targetIndex
                 }
+                .filter { it }
+                .first()
                 println("[$LVP_LOG_TAG] Scroll confirmed. Completing restoration cycle.")
                 restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED, targetIndex = -1)
             }
@@ -195,13 +195,15 @@ public class TimelineItemPresenterWithLazyListState(
         LaunchedEffect(timelineTabItem.key) {
             println("[$LVP_LOG_TAG] Restoration monitoring started for ${timelineTabItem.key}")
 
-            // Guard: Wait until the tab is visible before starting restoration to avoid background loops.
-            snapshotFlow { 
+            // Fix Bug 2: Wait until the tab is actually visible before starting restoration to avoid background loops.
+            snapshotFlow {
                 lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() || 
                 (currentState.listState.let { it is dev.dimension.flare.common.PagingState.Success && it.itemCount == 0 })
             }
             .filter { it }
             .first()
+
+            var lastObservedSuccess: TimelineSuccess? = null
 
             snapshotFlow {
                 val s = currentState
@@ -210,10 +212,13 @@ public class TimelineItemPresenterWithLazyListState(
             }.collect { (ls, info) ->
                 val (itemCount, isRefreshing, appendState) = info
 
-                if (isRefreshing) {
-                    // Only reset to READY if we were previously COMPLETED.
-                    // This allows the initial load spinner to transition seamlessly into the restoration search.
-                    if (restorationState.status == RestorationState.Status.COMPLETED) {
+                // Identity-based refresh detection ensures we don't miss rapid Twitter updates.
+                val isIdentityRefresh = ls != null && restorationState.status == RestorationState.Status.COMPLETED && ls !== lastObservedSuccess
+                lastObservedSuccess = ls
+
+                if (isRefreshing || isIdentityRefresh) {
+                    // Manual or background refresh triggers a state reset if we were previously stable.
+                    if (restorationState.status == RestorationState.Status.COMPLETED || isIdentityRefresh) {
                         println("[$LVP_LOG_TAG] Refresh detected, resetting restoration state to READY.")
                         restorationState = RestorationState(status = RestorationState.Status.READY)
                         newPostsState = NewPostsState()
@@ -225,16 +230,16 @@ public class TimelineItemPresenterWithLazyListState(
                 if (restorationState.status == RestorationState.Status.COMPLETED) return@collect
 
                 // Handle empty or error states to clear the loading spinner if no progress can be made.
-                if (itemCount == 0 && ls == null) {
+                if (ls == null) {
                     val listState = currentState.listState
-                    if (listState is dev.dimension.flare.common.PagingState.Error || listState is dev.dimension.flare.common.PagingState.Empty) {
-                        println("[$LVP_LOG_TAG] Feed ended or errored, completing search.")
+                    if (listState is dev.dimension.flare.common.PagingState.Error) {
+                        println("[$LVP_LOG_TAG] Feed errored, completing search.")
                         restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
                     }
                     return@collect
                 }
 
-                if (ls == null || itemCount == 0) return@collect
+                if (itemCount == 0) return@collect
 
                 // If waiting for scroll confirmation in the other effect, don't restart search logic here.
                 if (restorationState.targetIndex >= 0) return@collect
@@ -266,7 +271,7 @@ public class TimelineItemPresenterWithLazyListState(
                     return@collect
                 }
 
-                // Internal status remains RESTORING until found OR target-scrolled
+                // Transition to active searching
                 if (restorationState.status != RestorationState.Status.RESTORING) {
                     restorationState = restorationState.copy(status = RestorationState.Status.RESTORING)
                 }
@@ -284,10 +289,10 @@ public class TimelineItemPresenterWithLazyListState(
                         if (lvpIndex > 0) {
                             // Indicator count is exactly the number of raw items above the LVP.
                             newPostsState = newPostsState.copy(showIndicator = true, count = lvpIndex)
-                            // Transition to target-tracking phase
+                            // Switch to target-tracking phase to wait for physical layout updates
                             restorationState = restorationState.copy(targetIndex = lvpIndex)
                         } else {
-                            // LVP is at the top, done immediately
+                            // LVP is at index 0, we are done immediately
                             restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
                         }
                     } else {
@@ -307,7 +312,7 @@ public class TimelineItemPresenterWithLazyListState(
 
         var lastPrependState by remember { mutableStateOf<LoadState>(LoadState.NotLoading(endOfPaginationReached = false)) }
 
-        // Detect when new posts have been loaded at the top during a refresh
+        // Detect when new posts arrive in the background after initial restoration
         state.listState.onSuccess {
             val success = this
             LaunchedEffect(success) {
@@ -316,7 +321,9 @@ public class TimelineItemPresenterWithLazyListState(
                     .collect { (currentPrependState, currentAppendState, currentItemCount) ->
                         val visibleIndex = currentVisibleIndexState.value
                         if (lastObservedIndicatorItemCount == 0) {
-                            if (currentItemCount > 0) lastObservedIndicatorItemCount = currentItemCount
+                            if (currentItemCount > 0) {
+                                lastObservedIndicatorItemCount = currentItemCount
+                            }
                         } else if (lastPrependState is LoadState.Loading &&
                             currentPrependState is LoadState.NotLoading &&
                             currentItemCount > lastObservedIndicatorItemCount &&
@@ -376,7 +383,7 @@ public class TimelineItemPresenterWithLazyListState(
             override fun refreshSync() {
                 println("[$LVP_LOG_TAG] refreshSync triggered. Index=${lazyListState.firstVisibleItemIndex}")
                 scope.launch {
-                    saveCurrentScrollPositionSync()
+                    currentSaveFunction()
                     restorationState = RestorationState(status = RestorationState.Status.READY)
                     newPostsState = NewPostsState()
                     lastObservedIndicatorItemCount = 0
@@ -386,11 +393,13 @@ public class TimelineItemPresenterWithLazyListState(
 
             override suspend fun refreshSuspend() {
                 println("[$LVP_LOG_TAG] refreshSuspend triggered. Index=${lazyListState.firstVisibleItemIndex}")
-                saveCurrentScrollPositionSync()
-                restorationState = RestorationState(status = RestorationState.Status.READY)
-                newPostsState = NewPostsState()
-                lastObservedIndicatorItemCount = 0
-                state.refreshSuspend()
+                scope.launch {
+                    currentSaveFunction()
+                    restorationState = RestorationState(status = RestorationState.Status.READY)
+                    newPostsState = NewPostsState()
+                    lastObservedIndicatorItemCount = 0
+                    state.refreshSuspend()
+                }
             }
         }
     }
