@@ -134,7 +134,6 @@ internal fun TimelineContent(
         ) {
             AccentButton(
                 onClick = {
-                    state.onNewTootsShown()
                     scope.launch {
                         state.lazyListState.scrollToItem(0)
                     }

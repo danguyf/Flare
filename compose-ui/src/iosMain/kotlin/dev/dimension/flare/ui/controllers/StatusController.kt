@@ -122,7 +122,6 @@ public fun TimelineItemController(
                 Row(
                     modifier =
                         Modifier.clickable {
-                            state.onNewTootsShown()
                             scope.launch {
                                 state.lazyListState.scrollToItem(0)
                             }

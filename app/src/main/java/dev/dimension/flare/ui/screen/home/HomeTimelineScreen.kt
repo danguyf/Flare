@@ -388,7 +388,6 @@ internal fun TimelineItemContent(
                 ) {
                     Glassify(
                         onClick = {
-                            state.onNewTootsShown()
                             scope.launch {
                                 state.lazyListState.scrollToItem(0)
                             }
