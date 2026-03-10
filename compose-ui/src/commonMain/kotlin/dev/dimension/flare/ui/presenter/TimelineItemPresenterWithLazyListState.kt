@@ -15,12 +15,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.paging.LoadState
-import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.data.database.scroll.model.DbFeedScrollPosition
 import dev.dimension.flare.data.model.TimelineTabItem
 import dev.dimension.flare.data.repository.ScrollPositionRepository
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -44,11 +43,6 @@ private data class RestorationState(
         COMPLETED,  // Restoration finished (success, failed, or gave up)
     }
 }
-
-private data class NewPostsState(
-    val showIndicator: Boolean = false,
-    val count: Int = 0,
-)
 
 public class TimelineItemPresenterWithLazyListState(
     private val timelineTabItem: TimelineTabItem,
@@ -111,8 +105,7 @@ public class TimelineItemPresenterWithLazyListState(
         val scope = rememberCoroutineScope()
 
         var restorationState by remember { mutableStateOf(RestorationState()) }
-        var newPostsState by remember { mutableStateOf(NewPostsState()) }
-        var lastObservedIndicatorItemCount by remember { mutableStateOf(0) }
+        var lastObservedItemCount by remember { mutableStateOf(0) }
 
         // LVP (Last Viewed Post) management
         val scrollPositionRepo = koinInject<ScrollPositionRepository>()
@@ -219,8 +212,7 @@ public class TimelineItemPresenterWithLazyListState(
                     if (restorationState.status == RestorationState.Status.COMPLETED || isIdentityRefresh) {
                         println("[$LVP_LOG_TAG] Refresh detected, resetting restoration state to READY.")
                         restorationState = RestorationState(status = RestorationState.Status.READY)
-                        newPostsState = NewPostsState()
-                        lastObservedIndicatorItemCount = 0
+                        lastObservedItemCount = 0
                     }
                     return@collect
                 }
@@ -248,11 +240,6 @@ public class TimelineItemPresenterWithLazyListState(
                         lvpRestoreFailedEventsSource.tryEmit(Unit)
                     }
                     restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
-                    // Ensure NP indicator is shown if we are not at the top
-                    val visIndex = lazyListState.firstVisibleItemIndex
-                    if (visIndex > 0) {
-                        newPostsState = newPostsState.copy(showIndicator = true, count = visIndex)
-                    }
                 }
 
                 // Protect against endless searching loops by enforcing the strictly specified limit.
@@ -285,18 +272,10 @@ public class TimelineItemPresenterWithLazyListState(
                     val lvpIndex = restoreLvpInFeed(lazyListState, ls, scrollPosition)
                     if (lvpIndex >= 0) {
                         if (lvpIndex > 0) {
-                            // Indicator count is exactly the number of raw items above the LVP.
-                            newPostsState = newPostsState.copy(showIndicator = true, count = lvpIndex)
-                            // Switch to target-tracking phase to wait for physical layout updates
                             restorationState = restorationState.copy(targetIndex = lvpIndex)
                         } else {
                             // LVP is at index 0, we are done immediately
                             restorationState = restorationState.copy(status = RestorationState.Status.COMPLETED)
-                            // Ensure NP indicator is shown if we are not at the top
-                            val visIndex = lazyListState.firstVisibleItemIndex
-                            if (visIndex > 0) {
-                                newPostsState = newPostsState.copy(showIndicator = true, count = visIndex)
-                            }
                         }
                     } else {
                         // Not found in current items, wait for more pages to load via Paging append.
@@ -313,75 +292,21 @@ public class TimelineItemPresenterWithLazyListState(
             }
         }
 
-        var lastPrependState by remember { mutableStateOf<LoadState>(LoadState.NotLoading(endOfPaginationReached = false)) }
-
-        // Detect when new posts arrive in the background after initial restoration
-        state.listState.onSuccess {
-            val success = this
-            LaunchedEffect(success) {
-                snapshotFlow { Triple(success.prependState, success.appendState, success.itemCount) }
-                    .distinctUntilChanged()
-                    .collect { (currentPrependState, currentAppendState, currentItemCount) ->
-                        val visibleIndex = currentVisibleIndexState.value
-                        if (lastObservedIndicatorItemCount == 0) {
-                            if (currentItemCount > 0) {
-                                lastObservedIndicatorItemCount = currentItemCount
-                            }
-                        } else if (lastPrependState is LoadState.Loading &&
-                            currentPrependState is LoadState.NotLoading &&
-                            currentItemCount > lastObservedIndicatorItemCount &&
-                            visibleIndex > 0 &&
-                            restorationState.status == RestorationState.Status.COMPLETED
-                        ) {
-                            val newItemsCount = currentItemCount - lastObservedIndicatorItemCount
-                            val totalNewAbove = newPostsState.count + newItemsCount
-                            if (newItemsCount > 0) {
-                                newPostsState = newPostsState.copy(showIndicator = true, count = totalNewAbove)
-                            }
-                        }
-                        lastObservedIndicatorItemCount = currentItemCount
-                        lastPrependState = currentPrependState
-                    }
-            }
-        }
-
-        // Sync newPostsCount with scroll position (decrement once 50% in view)
-        LaunchedEffect(currentVisibleIndexState.value, restorationState.status, restorationState.targetIndex) {
-            val currentVisibleIndex = currentVisibleIndexState.value
-            // Requirement: Sync count with scroll position, but only decrement to "mark as read".
-            // Guard: Avoid resetting to 0 during restoration transitions by checking for COMPLETED and ensuring no target scroll is active.
-            if (restorationState.status == RestorationState.Status.COMPLETED &&
-                restorationState.targetIndex < 0 &&
-                newPostsState.showIndicator &&
-                currentVisibleIndex < newPostsState.count &&
-                currentVisibleIndex >= 0
-            ) {
-                newPostsState =
-                    newPostsState.copy(
-                        count = currentVisibleIndex,
-                    )
-            }
-        }
-
-        // Auto-hide indicator ONLY when count reaches zero
-        LaunchedEffect(newPostsState.count, restorationState.status) {
-            if (restorationState.status == RestorationState.Status.COMPLETED) {
-                if (newPostsState.showIndicator && newPostsState.count <= 0) {
-                    newPostsState = newPostsState.copy(showIndicator = false, count = 0)
-                }
-            }
-        }
-
         return object : State, TimelineItemPresenter.State by state {
-            override val showNewToots = newPostsState.showIndicator
+            // NP should appear once COMPLETED if there are posts above.
+            override val showNewToots = currentVisibleIndexState.value > 0 && restorationState.status == RestorationState.Status.COMPLETED
             override val lazyListState = lazyListState
-            override val newPostsCount = newPostsState.count
+            override val newPostsCount = currentVisibleIndexState.value
             override val lvpRestoreFailedEvents = lvpRestoreFailedEventsSource
             override val isRefreshing: Boolean
                 get() = state.isRefreshing || (restorationState.status != RestorationState.Status.COMPLETED && restorationState.status != RestorationState.Status.READY)
 
             override fun refreshSync() {
                 println("[$LVP_LOG_TAG] refreshSync triggered. Index=${lazyListState.firstVisibleItemIndex}")
+                // Immediate reset of indicator states to avoid flickering during refresh
+                restorationState = RestorationState(status = RestorationState.Status.READY)
+                lastObservedItemCount = 0
+
                 scope.launch {
                     currentSaveFunction()
                     restorationState = RestorationState(status = RestorationState.Status.READY)
@@ -393,6 +318,10 @@ public class TimelineItemPresenterWithLazyListState(
 
             override suspend fun refreshSuspend() {
                 println("[$LVP_LOG_TAG] refreshSuspend triggered. Index=${lazyListState.firstVisibleItemIndex}")
+                // Immediate reset of indicator states to avoid flickering during refresh
+                restorationState = RestorationState(status = RestorationState.Status.READY)
+                lastObservedItemCount = 0
+
                 scope.launch {
                     currentSaveFunction()
                     restorationState = RestorationState(status = RestorationState.Status.READY)

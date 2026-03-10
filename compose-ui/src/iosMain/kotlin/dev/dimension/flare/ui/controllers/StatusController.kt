@@ -133,7 +133,7 @@ public fun TimelineItemController(
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    CupertinoText(text = if (state.newPostsCount == 1) "1 New Post" else "${state.newPostsCount} New Posts")
+                    CupertinoText(text = if (state.newPostsCount == 1) "1 Post" else "${state.newPostsCount} Posts")
                 }
             }
         }
